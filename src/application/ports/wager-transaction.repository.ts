@@ -1,4 +1,7 @@
-import type { WagerTransaction } from '../../domain/wager-transaction/wager-transaction.js';
+import type {
+  WagerTransaction,
+  WagerTransactionKind,
+} from '../../domain/wager-transaction/wager-transaction.js';
 
 export interface WagerTransactionRepository {
   findById(id: string): Promise<WagerTransaction | null>;
@@ -10,6 +13,10 @@ export interface WagerTransactionRepository {
   findByProviderAndExternalTransactionId(
     providerId: string,
     externalTransactionId: string,
+  ): Promise<WagerTransaction | null>;
+  findProcessedByReferenceAndKind(
+    referenceTransactionId: string,
+    kind: WagerTransactionKind,
   ): Promise<WagerTransaction | null>;
   save(transaction: WagerTransaction): Promise<void>;
 }

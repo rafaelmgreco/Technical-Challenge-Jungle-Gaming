@@ -212,6 +212,262 @@ describe('WagerTransactionsController (e2e)', () => {
     });
   });
 
+  it('refunds a processed BET once, credits the same amount, and replays idempotently', async () => {
+    await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', 'http-provider:refund-bet-1')
+      .send({
+        providerId: 'http-provider',
+        externalTransactionId: 'refund-bet-1',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        roundId: 'refund-round-1',
+        gameId: 'refund-game-1',
+        kind: 'BET',
+        money: { amount: '30.00', currency: 'BRL' },
+      })
+      .expect(201);
+
+    const refundBody = {
+      providerId: 'http-provider',
+      externalTransactionId: 'refund-1',
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'refund-round-1',
+      gameId: 'refund-game-1',
+      kind: 'REFUND',
+      money: { amount: '30.00', currency: 'BRL' },
+      referenceExternalTransactionId: 'refund-bet-1',
+    };
+    const refundKey = 'http-provider:refund-1';
+    const first = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', refundKey)
+      .send(refundBody)
+      .expect(201);
+
+    expect(first.body).toMatchObject({
+      status: 'PROCESSED',
+      balance: { amount: '100.00', currency: 'BRL' },
+      idempotentReplay: false,
+    });
+
+    const retry = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', refundKey)
+      .send(refundBody)
+      .expect(200);
+    expect(retry.body).toEqual({ ...first.body, idempotentReplay: true });
+
+    const duplicateRefund = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', 'http-provider:refund-duplicate')
+      .send({ ...refundBody, externalTransactionId: 'refund-duplicate' })
+      .expect(422);
+    expect(duplicateRefund.body).toMatchObject({
+      status: 'REJECTED',
+      failureCode: 'REFERENCE_ALREADY_REVERSED',
+    });
+
+    const persisted = await new MikroOrmWalletRepository(orm.em.fork()).findById(wallet.id);
+    expect(persisted?.balance.toJSON()).toEqual({ amount: '100.00', currency: 'BRL' });
+    const refundLedger = await orm.em.getConnection().execute(
+      'select count(*)::int as count from "wallet_ledger_entries" where "transaction_id" = ?',
+      [first.body.transactionId],
+    );
+    expect(refundLedger[0].count).toBe(1);
+  });
+
+  it('rejects a REFUND whose amount differs from its processed BET', async () => {
+    await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', 'http-provider:refund-amount-bet')
+      .send({
+        providerId: 'http-provider',
+        externalTransactionId: 'refund-amount-bet',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        roundId: 'refund-amount-round',
+        gameId: 'refund-amount-game',
+        kind: 'BET',
+        money: { amount: '20.00', currency: 'BRL' },
+      })
+      .expect(201);
+
+    const response = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', 'http-provider:refund-wrong-amount')
+      .send({
+        providerId: 'http-provider',
+        externalTransactionId: 'refund-wrong-amount',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        roundId: 'refund-amount-round',
+        gameId: 'refund-amount-game',
+        kind: 'REFUND',
+        money: { amount: '19.99', currency: 'BRL' },
+        referenceExternalTransactionId: 'refund-amount-bet',
+      })
+      .expect(422);
+
+    expect(response.body).toMatchObject({ status: 'REJECTED', failureCode: 'INVALID_REFERENCE' });
+    const persisted = await new MikroOrmWalletRepository(orm.em.fork()).findById(wallet.id);
+    expect(persisted?.balance.toJSON()).toEqual({ amount: '80.00', currency: 'BRL' });
+  });
+
+  it('serializes concurrent refunds so a processed BET is credited only once', async () => {
+    await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', 'http-provider:concurrent-refund-bet')
+      .send({
+        providerId: 'http-provider',
+        externalTransactionId: 'concurrent-refund-bet',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        roundId: 'concurrent-refund-round',
+        gameId: 'concurrent-refund-game',
+        kind: 'BET',
+        money: { amount: '40.00', currency: 'BRL' },
+      })
+      .expect(201);
+
+    const submitRefund = (externalTransactionId: string) =>
+      request(app.getHttpServer())
+        .post('/wagering/transactions')
+        .set('Idempotency-Key', `http-provider:${externalTransactionId}`)
+        .send({
+          providerId: 'http-provider',
+          externalTransactionId,
+          playerId: wallet.playerId,
+          walletId: wallet.id,
+          roundId: 'concurrent-refund-round',
+          gameId: 'concurrent-refund-game',
+          kind: 'REFUND',
+          money: { amount: '40.00', currency: 'BRL' },
+          referenceExternalTransactionId: 'concurrent-refund-bet',
+        });
+
+    const results = await Promise.all([
+      submitRefund('concurrent-refund-a'),
+      submitRefund('concurrent-refund-b'),
+    ]);
+    expect(results.map((result) => result.status).sort((left, right) => left - right)).toEqual([201, 422]);
+    expect(results.find((result) => result.status === 422)?.body.failureCode).toBe('REFERENCE_ALREADY_REVERSED');
+
+    const persisted = await new MikroOrmWalletRepository(orm.em.fork()).findById(wallet.id);
+    expect(persisted?.balance.toJSON()).toEqual({ amount: '100.00', currency: 'BRL' });
+    const refundCount = await orm.em.getConnection().execute(
+      'select count(*)::int as count from "wager_transactions" where "wallet_id" = ? and "kind" = \'REFUND\' and "status" = \'PROCESSED\'',
+      [wallet.id],
+    );
+    expect(refundCount[0].count).toBe(1);
+  });
+
+  it('rolls back processed BET, WIN, and REFUND transactions in the opposite direction once', async () => {
+    const submit = (externalTransactionId: string, kind: string, amount: string, reference?: string) =>
+      request(app.getHttpServer())
+        .post('/wagering/transactions')
+        .set('Idempotency-Key', `http-provider:${externalTransactionId}`)
+        .send({
+          providerId: 'http-provider',
+          externalTransactionId,
+          playerId: wallet.playerId,
+          walletId: wallet.id,
+          roundId: 'rollback-round',
+          gameId: 'rollback-game',
+          kind,
+          money: { amount, currency: 'BRL' },
+          ...(reference === undefined ? {} : { referenceExternalTransactionId: reference }),
+        });
+
+    await submit('rollback-bet', 'BET', '25.00').expect(201);
+    const rollbackBet = await submit('rollback-bet-event', 'ROLLBACK', '25.00', 'rollback-bet').expect(201);
+    expect(rollbackBet.body.balance).toEqual({ amount: '100.00', currency: 'BRL' });
+
+    const duplicateBetRollback = await submit('rollback-bet-event-duplicate', 'ROLLBACK', '25.00', 'rollback-bet')
+      .expect(422);
+    expect(duplicateBetRollback.body.failureCode).toBe('REFERENCE_ALREADY_REVERSED');
+
+    await submit('rollback-win', 'WIN', '5.00').expect(201);
+    const rollbackWin = await submit('rollback-win-event', 'ROLLBACK', '5.00', 'rollback-win').expect(201);
+    expect(rollbackWin.body.balance).toEqual({ amount: '100.00', currency: 'BRL' });
+
+    await submit('rollback-refund-bet', 'BET', '10.00').expect(201);
+    await submit('rollback-refund', 'REFUND', '10.00', 'rollback-refund-bet').expect(201);
+    const rollbackRefund = await submit('rollback-refund-event', 'ROLLBACK', '10.00', 'rollback-refund').expect(201);
+    expect(rollbackRefund.body.balance).toEqual({ amount: '90.00', currency: 'BRL' });
+
+    const persisted = await new MikroOrmWalletRepository(orm.em.fork()).findById(wallet.id);
+    expect(persisted?.balance.toJSON()).toEqual({ amount: '90.00', currency: 'BRL' });
+  });
+
+  it('rejects a rollback that would make the wallet negative with its own failure code', async () => {
+    await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', 'http-provider:rollback-insufficient-win')
+      .send({
+        providerId: 'http-provider',
+        externalTransactionId: 'rollback-insufficient-win',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        roundId: 'rollback-insufficient-round',
+        gameId: 'rollback-insufficient-game',
+        kind: 'WIN',
+        money: { amount: '20.00', currency: 'BRL' },
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', 'http-provider:rollback-insufficient-bet')
+      .send({
+        providerId: 'http-provider',
+        externalTransactionId: 'rollback-insufficient-bet',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        roundId: 'rollback-insufficient-round',
+        gameId: 'rollback-insufficient-game',
+        kind: 'BET',
+        money: { amount: '110.00', currency: 'BRL' },
+      })
+      .expect(201);
+
+    const body = {
+      providerId: 'http-provider',
+      externalTransactionId: 'rollback-insufficient-event',
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'rollback-insufficient-round',
+      gameId: 'rollback-insufficient-game',
+      kind: 'ROLLBACK',
+      money: { amount: '20.00', currency: 'BRL' },
+      referenceExternalTransactionId: 'rollback-insufficient-win',
+    };
+    const key = 'http-provider:rollback-insufficient-event';
+
+    const first = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', key)
+      .send(body)
+      .expect(422);
+    expect(first.body).toMatchObject({ status: 'REJECTED', failureCode: 'ROLLBACK_INSUFFICIENT_FUNDS' });
+
+    const retry = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', key)
+      .send(body)
+      .expect(422);
+    expect(retry.body).toMatchObject({
+      transactionId: first.body.transactionId,
+      status: 'REJECTED',
+      failureCode: 'ROLLBACK_INSUFFICIENT_FUNDS',
+      idempotentReplay: true,
+    });
+
+    const persisted = await new MikroOrmWalletRepository(orm.em.fork()).findById(wallet.id);
+    expect(persisted?.balance.toJSON()).toEqual({ amount: '10.00', currency: 'BRL' });
+  });
+
   it('processes LOSS without changing the balance or creating a ledger entry, and replays the original result', async () => {
     const body = {
       providerId: 'http-provider',

@@ -65,20 +65,37 @@ function parseBody(value: unknown): SubmitWagerTransactionBody {
     throw badRequest('kind is not a supported wager transaction kind');
   }
   const kind = kindValue as WagerTransactionKind;
-  if (kind !== WagerTransactionKind.Bet && kind !== WagerTransactionKind.Win && kind !== WagerTransactionKind.Loss) {
+  if (
+    kind !== WagerTransactionKind.Bet &&
+    kind !== WagerTransactionKind.Win &&
+    kind !== WagerTransactionKind.Loss &&
+    kind !== WagerTransactionKind.Refund &&
+    kind !== WagerTransactionKind.Rollback
+  ) {
     throw new UnprocessableEntityException({
       code: 'UNSUPPORTED_TRANSACTION_KIND',
-      message: `The HTTP endpoint currently processes BET, WIN, and LOSS; ${kind} is not available yet`,
+      message: `The HTTP endpoint currently processes BET, WIN, LOSS, REFUND, and ROLLBACK; ${kind} is not available yet`,
     });
   }
   const referenceExternalTransactionId = body.referenceExternalTransactionId === undefined
     ? undefined
     : requiredString(body.referenceExternalTransactionId, 'referenceExternalTransactionId');
-  if (referenceExternalTransactionId !== undefined && kind !== WagerTransactionKind.Win) {
+  if (
+    referenceExternalTransactionId !== undefined &&
+    kind !== WagerTransactionKind.Win &&
+    kind !== WagerTransactionKind.Refund &&
+    kind !== WagerTransactionKind.Rollback
+  ) {
     throw new UnprocessableEntityException({
       code: 'UNSUPPORTED_REFERENCE_KIND',
-      message: 'The HTTP endpoint currently supports references only for WIN transactions',
+      message: 'The HTTP endpoint currently supports references only for WIN, REFUND, and ROLLBACK transactions',
     });
+  }
+  if (
+    (kind === WagerTransactionKind.Refund || kind === WagerTransactionKind.Rollback) &&
+    referenceExternalTransactionId === undefined
+  ) {
+    throw badRequest(`referenceExternalTransactionId is required for ${kind}`);
   }
   if (body.money === null || typeof body.money !== 'object' || Array.isArray(body.money)) {
     throw badRequest('money must contain amount and currency');
@@ -177,6 +194,8 @@ export class WagerTransactionsController {
           await this.movements.processLoss(transaction.id);
         } else if (transaction.kind === WagerTransactionKind.Bet) {
           await this.movements.debit(transaction.id);
+        } else if (transaction.kind === WagerTransactionKind.Rollback) {
+          await this.movements.rollback(transaction.id);
         } else {
           await this.movements.credit(transaction.id);
         }
@@ -186,7 +205,7 @@ export class WagerTransactionsController {
           return {
             transactionId: transaction.id,
             status: WagerTransactionStatus.Rejected,
-            failureCode: 'INSUFFICIENT_FUNDS',
+            failureCode: error.failureCode,
             idempotentReplay: registrationResult.replayed,
           };
         }
@@ -195,7 +214,7 @@ export class WagerTransactionsController {
           return {
             transactionId: transaction.id,
             status: WagerTransactionStatus.Rejected,
-            failureCode: 'INVALID_REFERENCE',
+            failureCode: error.failureCode,
             idempotentReplay: registrationResult.replayed,
           };
         }

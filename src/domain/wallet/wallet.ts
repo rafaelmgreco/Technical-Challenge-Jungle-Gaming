@@ -28,7 +28,7 @@ export class InvalidWalletError extends Error {
 }
 
 export class InsufficientWalletFundsError extends Error {
-  constructor() {
+  constructor(public readonly failureCode = 'INSUFFICIENT_FUNDS') {
     super('Wallet balance is insufficient for this debit');
     this.name = 'InsufficientWalletFundsError';
   }

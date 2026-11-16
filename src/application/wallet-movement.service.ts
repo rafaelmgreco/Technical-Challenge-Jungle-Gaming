@@ -26,7 +26,7 @@ export class WagerTransactionNotFoundError extends Error {
 }
 
 export class InvalidReferencedTransactionError extends Error {
-  constructor(transactionId: string) {
+  constructor(transactionId: string, public readonly failureCode = 'INVALID_REFERENCE') {
     super(`Wager transaction ${transactionId} has an invalid or unavailable reference`);
     this.name = 'InvalidReferencedTransactionError';
   }
@@ -42,6 +42,10 @@ export class WalletMovementService {
 
   async credit(transactionId: string, processedAt?: Date): Promise<WalletBalanceChange> {
     return this.applyMovement(transactionId, LedgerDirection.Credit, processedAt);
+  }
+
+  async rollback(transactionId: string, processedAt?: Date): Promise<WalletBalanceChange> {
+    return this.applyMovement(transactionId, undefined, processedAt);
   }
 
   async processLoss(transactionId: string, processedAt?: Date): Promise<Money> {
@@ -76,7 +80,7 @@ export class WalletMovementService {
 
   private async applyMovement(
     transactionId: string,
-    expectedDirection: LedgerDirection,
+    expectedDirection: LedgerDirection | undefined,
     processedAt?: Date,
   ): Promise<WalletBalanceChange> {
     const outcome = await this.unitOfWork.execute(async ({ wallets, ledger, transactions }) => {
@@ -87,13 +91,14 @@ export class WalletMovementService {
       if (transaction.status !== WagerTransactionStatus.Pending) {
         throw new InvalidWagerTransactionStateError(transaction.status);
       }
-      const expectedKind =
-        expectedDirection === LedgerDirection.Debit
-          ? WagerTransactionKind.Bet
-          : WagerTransactionKind.Win;
-      if (transaction.kind !== expectedKind) {
+      const expectedKindIsSupported = expectedDirection === undefined
+        ? transaction.kind === WagerTransactionKind.Rollback
+        : expectedDirection === LedgerDirection.Debit
+          ? transaction.kind === WagerTransactionKind.Bet
+          : transaction.kind === WagerTransactionKind.Win || transaction.kind === WagerTransactionKind.Refund;
+      if (!expectedKindIsSupported) {
         throw new InvalidWagerTransactionError(
-          `This movement handler only processes ${expectedKind} transactions`,
+          `This movement handler cannot process ${transaction.kind} transactions`,
         );
       }
 
@@ -114,7 +119,10 @@ export class WalletMovementService {
         await transactions.save(transaction);
         return { failure: new InvalidReferencedTransactionError(transaction.id) } as const;
       }
-      if (direction !== expectedDirection) {
+      if (direction === undefined) {
+        throw new InvalidWagerTransactionError(`Transaction kind ${transaction.kind} has no ledger direction`);
+      }
+      if (expectedDirection !== undefined && direction !== expectedDirection) {
         throw new InvalidWagerTransactionError(
           `Transaction kind ${transaction.kind} cannot be processed as ${expectedDirection}`,
         );
@@ -126,6 +134,26 @@ export class WalletMovementService {
       }
       if (wallet.playerId !== transaction.playerId) {
         throw new InvalidWagerTransactionError('Transaction player does not match the wallet owner');
+      }
+
+      if (
+        (transaction.kind === WagerTransactionKind.Refund || transaction.kind === WagerTransactionKind.Rollback) &&
+        reference
+      ) {
+        const existingReversal = await transactions.findProcessedByReferenceAndKind(
+          reference.id,
+          transaction.kind,
+        );
+        if (existingReversal) {
+          transaction.reject('REFERENCE_ALREADY_REVERSED');
+          await transactions.save(transaction);
+          return {
+            failure: new InvalidReferencedTransactionError(
+              transaction.id,
+              'REFERENCE_ALREADY_REVERSED',
+            ),
+          } as const;
+        }
       }
 
       const at = processedAt ?? new Date();
@@ -140,9 +168,12 @@ export class WalletMovementService {
           throw error;
         }
 
-        transaction.reject('INSUFFICIENT_FUNDS');
+        const failureCode = transaction.kind === WagerTransactionKind.Rollback
+          ? 'ROLLBACK_INSUFFICIENT_FUNDS'
+          : 'INSUFFICIENT_FUNDS';
+        transaction.reject(failureCode);
         await transactions.save(transaction);
-        return { failure: error } as const;
+        return { failure: new InsufficientWalletFundsError(failureCode) } as const;
       }
 
       transaction.markProcessed(reference?.id, at, change.balanceAfter);
