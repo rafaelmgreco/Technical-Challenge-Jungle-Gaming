@@ -1,5 +1,6 @@
 import { MikroORM } from '@mikro-orm/postgresql';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { IntegrationEventOutboxWorker } from '../src/application/integration-event-outbox.worker.js';
 import { Money } from '../src/domain/money/money.js';
 import { Wallet } from '../src/domain/wallet/wallet.js';
 import {
@@ -171,5 +172,57 @@ describe('integration event outbox claims', () => {
     });
     expect(dueAgain).toHaveLength(1);
     expect(dueAgain[0]?.attempts).toBe(1);
+
+    const recoveryEvent = {
+      id: crypto.randomUUID(),
+      aggregateId: transactions[0]!.id,
+      eventType: 'WagerTransactionRejected' as const,
+      version: 1 as const,
+      correlationId: crypto.randomUUID(),
+      occurredAt: new Date('2000-01-01T00:00:00.000Z'),
+      data: {
+        transactionId: transactions[0]!.id,
+        providerId: transactions[0]!.providerId,
+        externalTransactionId: transactions[0]!.externalTransactionId,
+        walletId: wallet.id,
+        kind: transactions[0]!.kind,
+        failureCode: 'TEST_REJECTION',
+      },
+    };
+    await writer.save(recoveryEvent);
+    const crashedPublisherAt = new Date('2000-01-01T00:00:01.000Z');
+    const crashedPublisherLease = new Date(
+      crashedPublisherAt.getTime() + 30_000,
+    );
+    const abandonedClaim = await repository.claimDue({
+      workerId: 'worker-crashed-before-publish',
+      at: crashedPublisherAt,
+      leaseUntil: crashedPublisherLease,
+      limit: 1,
+    });
+    expect(abandonedClaim.map(({ id }) => id)).toEqual([recoveryEvent.id]);
+
+    const recoveredEventIds: string[] = [];
+    const recoveryPublisher = new IntegrationEventOutboxWorker(
+      orm.em.fork(),
+      {
+        publish: async (event) => {
+          recoveredEventIds.push(event.id);
+        },
+      },
+    );
+    expect(
+      await recoveryPublisher.runOnce(
+        new Date(crashedPublisherLease.getTime() + 1),
+      ),
+    ).toBe(1);
+    expect(recoveredEventIds).toEqual([recoveryEvent.id]);
+
+    const recoveredState = await orm.em.getConnection().execute(
+      'select "published_at", "lease_owner" from "integration_event_outbox" where "id" = ?',
+      [recoveryEvent.id],
+    );
+    expect(recoveredState[0].published_at).toBeTruthy();
+    expect(recoveredState[0].lease_owner).toBeNull();
   });
 });
