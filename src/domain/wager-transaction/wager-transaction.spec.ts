@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { Money } from '../money/money.js';
+import { LedgerDirection } from '../ledger/ledger-entry.js';
 import {
   InvalidWagerTransactionError,
   InvalidWagerTransactionStateError,
@@ -172,6 +173,128 @@ describe('WagerTransaction', () => {
 
     expect(loss.affectsBalance()).toBe(false);
     expect(createTransaction().affectsBalance()).toBe(true);
+  });
+
+  it('maps BET, WIN, LOSS, and OPENING to their ledger effects', () => {
+    expect(createTransaction().ledgerDirectionFor()).toBe(LedgerDirection.Debit);
+    expect(
+      createTransaction({ kind: WagerTransactionKind.Win }).ledgerDirectionFor(),
+    ).toBe(LedgerDirection.Credit);
+    expect(
+      createTransaction({ kind: WagerTransactionKind.Loss }).ledgerDirectionFor(),
+    ).toBeUndefined();
+    expect(
+      createTransaction({ kind: WagerTransactionKind.Opening }).ledgerDirectionFor(),
+    ).toBe(LedgerDirection.Credit);
+  });
+
+  it('credits a REFUND only against a processed BET in the same context and amount', () => {
+    const referenceBet = createTransaction({
+      id: 'internal-bet-1',
+      externalTransactionId: 'bet-1',
+    });
+    referenceBet.markProcessed(undefined, processedAt);
+    const refund = createTransaction({
+      kind: WagerTransactionKind.Refund,
+      externalTransactionId: 'refund-1',
+      referenceExternalTransactionId: 'bet-1',
+    });
+
+    expect(refund.ledgerDirectionFor(referenceBet)).toBe(
+      LedgerDirection.Credit,
+    );
+  });
+
+  it('allows WIN to reference a processed BET with a different amount', () => {
+    const referenceBet = createTransaction({
+      id: 'internal-bet-1',
+      externalTransactionId: 'bet-1',
+    });
+    referenceBet.markProcessed(undefined, processedAt);
+    const win = createTransaction({
+      kind: WagerTransactionKind.Win,
+      externalTransactionId: 'win-1',
+      referenceExternalTransactionId: 'bet-1',
+      money: Money.from({ amount: '10.00', currency: 'BRL' }),
+    });
+
+    expect(win.ledgerDirectionFor(referenceBet)).toBe(LedgerDirection.Credit);
+  });
+
+  it('inverts ledger direction for ROLLBACK of BET, WIN, or REFUND', () => {
+    const bet = createTransaction({
+      id: 'internal-bet-1',
+      externalTransactionId: 'bet-1',
+    });
+    bet.markProcessed(undefined, processedAt);
+    const rollbackBet = createTransaction({
+      kind: WagerTransactionKind.Rollback,
+      externalTransactionId: 'rollback-bet',
+      referenceExternalTransactionId: 'bet-1',
+    });
+    expect(rollbackBet.ledgerDirectionFor(bet)).toBe(LedgerDirection.Credit);
+
+    const win = createTransaction({
+      id: 'internal-win-1',
+      externalTransactionId: 'win-1',
+      kind: WagerTransactionKind.Win,
+    });
+    win.markProcessed(undefined, processedAt);
+    const rollbackWin = createTransaction({
+      kind: WagerTransactionKind.Rollback,
+      externalTransactionId: 'rollback-win',
+      referenceExternalTransactionId: 'win-1',
+    });
+    expect(rollbackWin.ledgerDirectionFor(win)).toBe(LedgerDirection.Debit);
+
+    const refund = createTransaction({
+      id: 'internal-refund-1',
+      externalTransactionId: 'refund-1',
+      kind: WagerTransactionKind.Refund,
+      referenceExternalTransactionId: 'bet-1',
+    });
+    refund.markProcessed('internal-bet-1', processedAt);
+    const rollbackRefund = createTransaction({
+      kind: WagerTransactionKind.Rollback,
+      externalTransactionId: 'rollback-refund',
+      referenceExternalTransactionId: 'refund-1',
+    });
+    expect(rollbackRefund.ledgerDirectionFor(refund)).toBe(
+      LedgerDirection.Debit,
+    );
+  });
+
+  it('rejects references that are missing, unprocessed, of the wrong kind, or mismatched', () => {
+    const refund = createTransaction({
+      kind: WagerTransactionKind.Refund,
+      referenceExternalTransactionId: 'bet-1',
+    });
+    expect(() => refund.ledgerDirectionFor()).toThrow(
+      InvalidWagerTransactionError,
+    );
+
+    const pendingBet = createTransaction({ externalTransactionId: 'bet-1' });
+    expect(() => refund.ledgerDirectionFor(pendingBet)).toThrow(
+      InvalidWagerTransactionError,
+    );
+
+    const processedWin = createTransaction({
+      externalTransactionId: 'bet-1',
+      kind: WagerTransactionKind.Win,
+    });
+    processedWin.markProcessed(undefined, processedAt);
+    expect(() => refund.ledgerDirectionFor(processedWin)).toThrow(
+      InvalidWagerTransactionError,
+    );
+
+    const processedBet = createTransaction({
+      externalTransactionId: 'bet-1',
+      roundId: 'different-round',
+    });
+    processedBet.markProcessed(undefined, processedAt);
+    expect(() => refund.ledgerDirectionFor(processedBet)).toThrow(
+      InvalidWagerTransactionError,
+    );
   });
 
   it('rehydrates persisted state without replaying transitions', () => {

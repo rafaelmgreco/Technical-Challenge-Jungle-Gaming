@@ -14,7 +14,7 @@ Projeto para o [desafio técnico de backend da Jungle Gaming](https://github.com
 
 ## Estado atual
 
-Este repositório está no início: contém a aplicação NestJS mínima, o objeto de valor `Money`, o agregado `Wallet` e o modelo de transação de aposta. Ledger, persistência, concorrência e mensageria serão implementados em etapas pequenas.
+Este repositório está no início: contém a aplicação NestJS mínima, o objeto de valor `Money`, o agregado `Wallet`, o modelo de transação de aposta e a entrada imutável do ledger. Persistência, concorrência e mensageria serão implementadas em etapas pequenas.
 
 ## Começar
 
@@ -32,6 +32,6 @@ bun test
 bun run test:e2e
 ```
 
-Os testes atuais cobrem o esqueleto e as regras de `Money`, `Wallet` e `WagerTransaction`. Cada regra de domínio e cada integração serão testadas quando forem adicionadas.
+Os testes atuais cobrem o esqueleto e as regras de `Money`, `Wallet`, `WagerTransaction` e ledger. Cada regra de domínio e cada integração serão testadas quando forem adicionadas.
 
 As transições de estado escolhidas para `WagerTransaction` estão em [ARCHITECTURE.md](./ARCHITECTURE.md).

@@ -18,11 +18,27 @@ Uma transação nasce em `PENDING`.
 
 `REFUND` e `ROLLBACK` exigem uma referência externa. `WIN` pode carregar uma referência opcional. Uma transação `LOSS` não altera o saldo. Todos os valores de transação precisam ser positivos.
 
+`OPENING` representa somente o crédito interno de abertura da carteira. Os adaptadores HTTP e SQS deverão rejeitar `OPENING` como operação submetida por provedor.
+
 Os códigos de falha são strings estáveis em formato maiúsculo legível por máquina, por exemplo `INSUFFICIENT_FUNDS`. A lista de códigos específicos do processamento financeiro será consolidada junto com os casos de uso.
+
+## Ledger
+
+Cada `WalletLedgerEntry` é imutável e registra carteira, transação, direção, valor, saldo anterior, saldo posterior e instante de criação. A factory `create` exige moedas iguais, valor positivo, saldos não negativos e valida `saldo anterior ± valor = saldo posterior`. A unicidade de uma entrada por carteira e transação será garantida por constraint no PostgreSQL.
+
+| Transação | Direção |
+| --- | --- |
+| `OPENING` | crédito |
+| `BET` | débito |
+| `WIN` | crédito |
+| `LOSS` | sem entrada |
+| `REFUND` | crédito da `BET` referenciada |
+| `ROLLBACK` | direção oposta da `BET`, `WIN` ou `REFUND` referenciada |
+
+Referências financeiras precisam estar processadas e corresponder ao mesmo provedor, jogador, carteira, moeda e rodada. `REFUND` só aceita `BET`; `ROLLBACK` aceita `BET`, `WIN` ou `REFUND`; ambos exigem valor igual ao da referência. `WIN` pode referenciar uma `BET` sem exigir valor igual. `WagerTransaction.ledgerDirectionFor` aplica essas verificações antes de determinar a direção.
 
 ## Próximas decisões
 
-- Definir o lançamento imutável de ledger e a direção dos lançamentos de reversão.
 - Definir as constraints e migrations do PostgreSQL com valores monetários em centavos `BIGINT`.
 - Aplicar bloqueio pessimista por carteira dentro da transação SQL.
 - Definir o emulador de SQS local e as políticas de retry e DLQ.

@@ -1,4 +1,8 @@
 import { Money, type MoneyProps } from '../money/money.js';
+import {
+  LedgerDirection,
+  oppositeLedgerDirection,
+} from '../ledger/ledger-entry.js';
 
 export enum WagerTransactionKind {
   Opening = 'OPENING',
@@ -278,9 +282,81 @@ export class WagerTransaction {
     return this.payloadHash === payloadHash;
   }
 
+  ledgerDirectionFor(reference?: WagerTransaction): LedgerDirection | undefined {
+    switch (this.kind) {
+      case WagerTransactionKind.Opening:
+        return LedgerDirection.Credit;
+      case WagerTransactionKind.Win:
+        if (this.referenceExternalTransactionId !== undefined) {
+          this.assertReference(reference, [WagerTransactionKind.Bet], false);
+        }
+        return LedgerDirection.Credit;
+      case WagerTransactionKind.Bet:
+        return LedgerDirection.Debit;
+      case WagerTransactionKind.Loss:
+        return undefined;
+      case WagerTransactionKind.Refund:
+        this.assertReference(reference, [WagerTransactionKind.Bet]);
+        return LedgerDirection.Credit;
+      case WagerTransactionKind.Rollback: {
+        this.assertReference(reference, [
+          WagerTransactionKind.Bet,
+          WagerTransactionKind.Win,
+          WagerTransactionKind.Refund,
+        ]);
+
+        const referenceDirection =
+          reference.kind === WagerTransactionKind.Bet
+            ? LedgerDirection.Debit
+            : LedgerDirection.Credit;
+        return oppositeLedgerDirection(referenceDirection);
+      }
+    }
+  }
+
   private assertCanTransition(): void {
     if (this.isTerminal()) {
       throw new InvalidWagerTransactionStateError(this._status);
+    }
+  }
+
+  private assertReference(
+    reference: WagerTransaction | undefined,
+    allowedKinds: readonly WagerTransactionKind[],
+    requireSameAmount = true,
+  ): asserts reference is WagerTransaction {
+    if (!reference) {
+      throw new InvalidWagerTransactionError(
+        `${this.kind} requires its resolved reference transaction`,
+      );
+    }
+    if (reference.status !== WagerTransactionStatus.Processed) {
+      throw new InvalidWagerTransactionError(
+        'Reference transaction must be processed',
+      );
+    }
+    if (!allowedKinds.includes(reference.kind)) {
+      throw new InvalidWagerTransactionError(
+        `${this.kind} cannot reference a ${reference.kind} transaction`,
+      );
+    }
+    if (
+      reference.externalTransactionId !==
+        this.referenceExternalTransactionId ||
+      reference.providerId !== this.providerId ||
+      reference.playerId !== this.playerId ||
+      reference.walletId !== this.walletId ||
+      reference.roundId !== this.roundId ||
+      reference.money.currency !== this.money.currency
+    ) {
+      throw new InvalidWagerTransactionError(
+        'Reference transaction must match provider, player, wallet, currency, and round',
+      );
+    }
+    if (requireSameAmount && !reference.money.equals(this.money)) {
+      throw new InvalidWagerTransactionError(
+        'Reference transaction amount must match',
+      );
     }
   }
 
