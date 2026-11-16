@@ -1,5 +1,6 @@
 import {
   CreateQueueCommand,
+  DeleteMessageCommand,
   DeleteQueueCommand,
   GetQueueAttributesCommand,
   ReceiveMessageCommand,
@@ -31,9 +32,11 @@ describe.skipIf(!endpoint)('SQS wager transaction consumer', () => {
   let deadLetterQueueUrl: string;
   const playerId = `sqs-consumer-test-${crypto.randomUUID()}`;
   const messageId = crypto.randomUUID();
+  const messageIds = new Set([messageId]);
   const consumerName = 'wager-transaction-requested-v1';
   const originalQueueUrl = process.env.SQS_WAGER_TRANSACTIONS_QUEUE_URL;
   let walletId: string;
+  let crashWalletId: string | undefined;
 
   beforeAll(async () => {
     orm = await MikroORM.init(mikroOrmConfig);
@@ -101,12 +104,14 @@ describe.skipIf(!endpoint)('SQS wager transaction consumer', () => {
   afterAll(async () => {
     if (consumer) await consumer.onModuleDestroy();
     if (orm) {
-      await orm.em
-        .getConnection()
-        .execute(
-          'delete from "inbox_messages" where "consumer_name" = ? and "message_id" = ?',
-          [consumerName, messageId],
-        );
+      for (const id of messageIds) {
+        await orm.em
+          .getConnection()
+          .execute(
+            'delete from "inbox_messages" where "consumer_name" = ? and "message_id" = ?',
+            [consumerName, id],
+          );
+      }
       await orm.em
         .getConnection()
         .execute(
@@ -126,6 +131,24 @@ describe.skipIf(!endpoint)('SQS wager transaction consumer', () => {
       await orm.em
         .getConnection()
         .execute('delete from "wallets" where "player_id" = ?', [playerId]);
+      if (crashWalletId) {
+        await orm.em.getConnection().execute(
+          'delete from "integration_event_outbox" where "aggregate_id" in (select "id" from "wager_transactions" where "wallet_id" = ?)',
+          [crashWalletId],
+        );
+        await orm.em.getConnection().execute(
+          'delete from "wallet_ledger_entries" where "wallet_id" = ?',
+          [crashWalletId],
+        );
+        await orm.em.getConnection().execute(
+          'delete from "wager_transactions" where "wallet_id" = ?',
+          [crashWalletId],
+        );
+        await orm.em.getConnection().execute(
+          'delete from "wallets" where "id" = ?',
+          [crashWalletId],
+        );
+      }
       await orm.close(true);
     }
     if (sqs) {
@@ -199,6 +222,99 @@ describe.skipIf(!endpoint)('SQS wager transaction consumer', () => {
     );
     expect(metricsText).toContain('wager_duplicates_total 1');
     expect(metricsText).toContain('wager_processing_duration_seconds_count 2');
+  });
+
+  it('does not debit twice when acknowledgement fails after the financial commit', async () => {
+    const crashWallet = Wallet.open({
+      id: crypto.randomUUID(),
+      playerId: `${playerId}-after-commit`,
+      initialBalance: Money.from({ amount: '10.00', currency: 'BRL' }),
+    });
+    crashWalletId = crashWallet.id;
+    await new MikroOrmWalletRepository(orm.em.fork()).save(crashWallet);
+    const crashMessageId = crypto.randomUUID();
+    messageIds.add(crashMessageId);
+    const externalTransactionId = `after-commit-${crypto.randomUUID()}`;
+    const body = JSON.stringify({
+      messageId: crashMessageId,
+      type: 'WagerTransactionRequested',
+      occurredAt: new Date().toISOString(),
+      data: {
+        providerId: 'sqs-test-provider',
+        externalTransactionId,
+        idempotencyKey: `after-commit-${crypto.randomUUID()}`,
+        playerId: crashWallet.playerId,
+        walletId: crashWallet.id,
+        roundId: 'sqs-after-commit-round',
+        gameId: 'sqs-after-commit-game',
+        kind: WagerTransactionKind.Bet,
+        money: { amount: '5.00', currency: 'BRL' },
+      },
+    });
+    await sqs.send(
+      new SendMessageCommand({
+        QueueUrl: queueUrl,
+        MessageBody: body,
+        MessageGroupId: crashWallet.id,
+        MessageDeduplicationId: crashMessageId,
+      }),
+    );
+
+    const client = (consumer as unknown as { client: SQSClient }).client;
+    const originalSend = client.send.bind(client);
+    let failAcknowledgement = true;
+    Object.defineProperty(client, 'send', {
+      configurable: true,
+      value: async (command: { constructor: Function }) => {
+        if (failAcknowledgement && command instanceof DeleteMessageCommand) {
+          failAcknowledgement = false;
+          throw new Error('Simulated worker termination before SQS acknowledgement');
+        }
+        return originalSend(command as never);
+      },
+    });
+
+    try {
+      expect(await consumer.runOnce(0, 0)).toBe(0);
+    } finally {
+      Object.defineProperty(client, 'send', {
+        configurable: true,
+        value: originalSend,
+      });
+    }
+
+    const afterCommit = await new MikroOrmWalletRepository(
+      orm.em.fork(),
+    ).findById(crashWallet.id);
+    expect(afterCommit?.balance.toJSON()).toEqual({
+      amount: '5.00',
+      currency: 'BRL',
+    });
+
+    expect(await consumer.runOnce(0, 0)).toBe(1);
+    const afterRedelivery = await new MikroOrmWalletRepository(
+      orm.em.fork(),
+    ).findById(crashWallet.id);
+    const ledgerRows = await orm.em.getConnection().execute(
+      'select count(*)::int as count from "wallet_ledger_entries" where "wallet_id" = ?',
+      [crashWallet.id],
+    );
+    const transactionRows = await orm.em.getConnection().execute(
+      'select count(*)::int as count from "wager_transactions" where "provider_id" = ? and "external_transaction_id" = ?',
+      ['sqs-test-provider', externalTransactionId],
+    );
+    const inboxRows = await orm.em.getConnection().execute(
+      'select count(*)::int as count from "inbox_messages" where "consumer_name" = ? and "message_id" = ?',
+      [consumerName, crashMessageId],
+    );
+
+    expect(afterRedelivery?.balance.toJSON()).toEqual({
+      amount: '5.00',
+      currency: 'BRL',
+    });
+    expect(ledgerRows[0].count).toBe(1);
+    expect(transactionRows[0].count).toBe(1);
+    expect(inboxRows[0].count).toBe(1);
   });
 
   it('sends a poison message to the configured DLQ after five unsuccessful receives', async () => {
