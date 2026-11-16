@@ -25,6 +25,7 @@
     "db:migrate": "bun src/infrastructure/database/migrate.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-sqs": "^3.1169.0",
     "@mikro-orm/core": "^7.2.9",
     "@mikro-orm/decorators": "^7.2.9",
     "@mikro-orm/migrations": "^7.2.9",

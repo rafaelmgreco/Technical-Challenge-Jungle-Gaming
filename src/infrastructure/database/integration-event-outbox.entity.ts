@@ -9,14 +9,36 @@ export const IntegrationEventOutboxEntitySchema = defineEntity({
     eventType: p.string().fieldName('event_type').columnType('text'),
     version: p.integer().columnType('integer'),
     correlationId: p.string().fieldName('correlation_id').columnType('text'),
-    causationId: p.string().fieldName('causation_id').nullable().columnType('text'),
+    causationId: p
+      .string()
+      .fieldName('causation_id')
+      .nullable()
+      .columnType('text'),
     occurredAt: p.datetime().fieldName('occurred_at').columnType('timestamptz'),
     data: p.json().columnType('jsonb'),
     attempts: p.integer().columnType('integer'),
-    nextAttemptAt: p.datetime().fieldName('next_attempt_at').columnType('timestamptz'),
-    publishedAt: p.datetime().fieldName('published_at').nullable().columnType('timestamptz'),
+    nextAttemptAt: p
+      .datetime()
+      .fieldName('next_attempt_at')
+      .columnType('timestamptz'),
+    publishedAt: p
+      .datetime()
+      .fieldName('published_at')
+      .nullable()
+      .columnType('timestamptz'),
+    leaseOwner: p
+      .string()
+      .fieldName('lease_owner')
+      .nullable()
+      .columnType('text'),
+    leaseUntil: p
+      .datetime()
+      .fieldName('lease_until')
+      .nullable()
+      .columnType('timestamptz'),
   },
 });
 
-export class IntegrationEventOutboxEntity extends IntegrationEventOutboxEntitySchema.class {}
+export class IntegrationEventOutboxEntity
+  extends IntegrationEventOutboxEntitySchema.class {}
 IntegrationEventOutboxEntitySchema.setClass(IntegrationEventOutboxEntity);

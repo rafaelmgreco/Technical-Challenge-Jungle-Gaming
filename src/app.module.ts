@@ -11,6 +11,9 @@ import { WalletsController } from './wallets/wallets.controller.js';
 import { CreateWalletService } from './application/create-wallet.service.js';
 import { MikroOrmWalletUnitOfWork } from './infrastructure/persistence/mikro-orm-wallet-unit-of-work.js';
 import { PendingReferenceWorker } from './application/pending-reference.worker.js';
+import { IntegrationEventOutboxWorker } from './application/integration-event-outbox.worker.js';
+import { INTEGRATION_EVENT_PUBLISHER } from './application/ports/integration-event-publisher.js';
+import { SqsIntegrationEventPublisher } from './infrastructure/messaging/sqs-integration-event-publisher.js';
 
 @Module({
   imports: [
@@ -25,6 +28,12 @@ import { PendingReferenceWorker } from './application/pending-reference.worker.j
     WalletMovementService,
     RegisterWagerTransactionService,
     PendingReferenceWorker,
+    IntegrationEventOutboxWorker,
+    SqsIntegrationEventPublisher,
+    {
+      provide: INTEGRATION_EVENT_PUBLISHER,
+      useExisting: SqsIntegrationEventPublisher,
+    },
     CreateWalletService,
     MikroOrmWalletUnitOfWork,
     { provide: WALLET_UNIT_OF_WORK, useExisting: MikroOrmWalletUnitOfWork },

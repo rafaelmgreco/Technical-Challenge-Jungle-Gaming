@@ -127,6 +127,40 @@
           "enumItems": [],
           "mappedType": "text"
         },
+        "lease_owner": {
+          "name": "lease_owner",
+          "type": "text",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "collation": null,
+          "enumItems": [],
+          "mappedType": "text"
+        },
+        "lease_until": {
+          "name": "lease_until",
+          "type": "timestamptz(6)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": 6,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "collation": null,
+          "enumItems": [],
+          "mappedType": "datetime"
+        },
         "next_attempt_at": {
           "name": "next_attempt_at",
           "type": "timestamptz(6)",
@@ -197,6 +231,17 @@
         }
       },
       "indexes": [
+        {
+          "columnNames": [
+            "lease_until"
+          ],
+          "composite": false,
+          "constraint": false,
+          "keyName": "integration_event_outbox_lease_idx",
+          "primary": false,
+          "unique": false,
+          "where": "published_at IS NULL"
+        },
         {
           "columnNames": [
             "id"

@@ -39,6 +39,8 @@ bun test
 bun run test:e2e
 ```
 
-The current tests cover the application scaffold, the rules for `Money`, `Wallet`, `WagerTransaction`, and the ledger, both HTTP endpoints, atomic wallet opening, database constraints, repository persistence, idempotent retries and conflicts, referenced wins, pending-reference retries and exhaustion, pending and rejection outbox events, single-use refunds and rollbacks, rollback insufficient-funds rejection, and concurrent wallet movements and refunds in PostgreSQL. Start the database with `bun run db:up` before running the tests.
+The current tests cover the application scaffold, the rules for `Money`, `Wallet`, `WagerTransaction`, and the ledger, both HTTP endpoints, atomic wallet opening, database constraints, repository persistence, idempotent retries and conflicts, referenced wins, pending-reference retries and exhaustion, pending and rejection outbox events, concurrent outbox claims and retry scheduling, single-use refunds and rollbacks, rollback insufficient-funds rejection, and concurrent wallet movements and refunds in PostgreSQL. Start the database with `bun run db:up` before running the tests.
+
+The outbox publisher sends pending integration events to SQS. Set `SQS_QUEUE_URL` in the environment to activate its background worker. For an SQS-compatible local endpoint, set `SQS_ENDPOINT_URL`; the local emulator and queue setup are the next infrastructure step.
 
 The selected `WagerTransaction` state transitions are documented in [ARCHITECTURE.md](./ARCHITECTURE.md).
