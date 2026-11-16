@@ -27,6 +27,7 @@ describe.skipIf(!endpoint)('SQS wager transaction consumer', () => {
   let orm: MikroORM;
   let sqs: SQSClient;
   let consumer: SqsWagerTransactionConsumer;
+  let submissions: SubmitWagerTransactionService;
   let metrics: MetricsRegistry;
   let queueUrl: string;
   let deadLetterQueueUrl: string;
@@ -37,6 +38,7 @@ describe.skipIf(!endpoint)('SQS wager transaction consumer', () => {
   const originalQueueUrl = process.env.SQS_WAGER_TRANSACTIONS_QUEUE_URL;
   let walletId: string;
   let crashWalletId: string | undefined;
+  let shutdownWalletId: string | undefined;
 
   beforeAll(async () => {
     orm = await MikroORM.init(mikroOrmConfig);
@@ -84,7 +86,7 @@ describe.skipIf(!endpoint)('SQS wager transaction consumer', () => {
     process.env.SQS_WAGER_TRANSACTIONS_QUEUE_URL = queueUrl;
 
     const unitOfWork = new MikroOrmWalletUnitOfWork(orm.em);
-    const submissions = new SubmitWagerTransactionService(
+    submissions = new SubmitWagerTransactionService(
       new RegisterWagerTransactionService(unitOfWork),
       new WalletMovementService(unitOfWork),
       unitOfWork,
@@ -147,6 +149,24 @@ describe.skipIf(!endpoint)('SQS wager transaction consumer', () => {
         await orm.em.getConnection().execute(
           'delete from "wallets" where "id" = ?',
           [crashWalletId],
+        );
+      }
+      if (shutdownWalletId) {
+        await orm.em.getConnection().execute(
+          'delete from "integration_event_outbox" where "aggregate_id" in (select "id" from "wager_transactions" where "wallet_id" = ?)',
+          [shutdownWalletId],
+        );
+        await orm.em.getConnection().execute(
+          'delete from "wallet_ledger_entries" where "wallet_id" = ?',
+          [shutdownWalletId],
+        );
+        await orm.em.getConnection().execute(
+          'delete from "wager_transactions" where "wallet_id" = ?',
+          [shutdownWalletId],
+        );
+        await orm.em.getConnection().execute(
+          'delete from "wallets" where "id" = ?',
+          [shutdownWalletId],
         );
       }
       await orm.close(true);
@@ -314,6 +334,110 @@ describe.skipIf(!endpoint)('SQS wager transaction consumer', () => {
     });
     expect(ledgerRows[0].count).toBe(1);
     expect(transactionRows[0].count).toBe(1);
+    expect(inboxRows[0].count).toBe(1);
+  });
+
+  it('finishes an in-flight message before graceful shutdown completes', async () => {
+    const shutdownWallet = Wallet.open({
+      id: crypto.randomUUID(),
+      playerId: `${playerId}-shutdown`,
+      initialBalance: Money.from({ amount: '10.00', currency: 'BRL' }),
+    });
+    shutdownWalletId = shutdownWallet.id;
+    await new MikroOrmWalletRepository(orm.em.fork()).save(shutdownWallet);
+    const shutdownMessageId = crypto.randomUUID();
+    messageIds.add(shutdownMessageId);
+    const externalTransactionId = `shutdown-${crypto.randomUUID()}`;
+    await sqs.send(
+      new SendMessageCommand({
+        QueueUrl: queueUrl,
+        MessageBody: JSON.stringify({
+          messageId: shutdownMessageId,
+          type: 'WagerTransactionRequested',
+          occurredAt: new Date().toISOString(),
+          data: {
+            providerId: 'sqs-test-provider',
+            externalTransactionId,
+            idempotencyKey: `shutdown-${crypto.randomUUID()}`,
+            playerId: shutdownWallet.playerId,
+            walletId: shutdownWallet.id,
+            roundId: 'sqs-shutdown-round',
+            gameId: 'sqs-shutdown-game',
+            kind: WagerTransactionKind.Bet,
+            money: { amount: '1.00', currency: 'BRL' },
+          },
+        }),
+        MessageGroupId: shutdownWallet.id,
+        MessageDeduplicationId: shutdownMessageId,
+      }),
+    );
+
+    let signalCommitted!: () => void;
+    const committed = new Promise<void>((resolve) => {
+      signalCommitted = resolve;
+    });
+    let releaseBeforeAcknowledgement!: () => void;
+    const acknowledgementGate = new Promise<void>((resolve) => {
+      releaseBeforeAcknowledgement = resolve;
+    });
+    const originalSubmit = submissions.submit.bind(submissions);
+    submissions.submit = async (input, inbox) => {
+      const result = await originalSubmit(input, inbox);
+      signalCommitted();
+      await acknowledgementGate;
+      return result;
+    };
+
+    const drainingConsumer = new SqsWagerTransactionConsumer(
+      submissions,
+      metrics,
+    );
+    const lifecycle = drainingConsumer as unknown as {
+      stopped: boolean;
+      loop?: Promise<void>;
+      consumeContinuously(): Promise<void>;
+    };
+    lifecycle.stopped = false;
+    lifecycle.loop = lifecycle.consumeContinuously();
+    let shutdown: Promise<void> | undefined;
+
+    try {
+      await committed;
+      const committedWallet = await new MikroOrmWalletRepository(
+        orm.em.fork(),
+      ).findById(shutdownWallet.id);
+      expect(committedWallet?.balance.toJSON()).toEqual({
+        amount: '9.00',
+        currency: 'BRL',
+      });
+
+      let shutdownCompleted = false;
+      shutdown = drainingConsumer
+        .onModuleDestroy()
+        .then(() => { shutdownCompleted = true; });
+      expect(shutdownCompleted).toBe(false);
+      releaseBeforeAcknowledgement();
+      await shutdown;
+      expect(shutdownCompleted).toBe(true);
+    } finally {
+      releaseBeforeAcknowledgement();
+      submissions.submit = originalSubmit;
+      if (shutdown) await shutdown;
+      else await drainingConsumer.onModuleDestroy();
+    }
+
+    const acknowledged = await sqs.send(
+      new ReceiveMessageCommand({
+        QueueUrl: queueUrl,
+        MaxNumberOfMessages: 1,
+        WaitTimeSeconds: 0,
+      }),
+    );
+    expect(acknowledged.Messages ?? []).toHaveLength(0);
+    const inboxRows = await orm.em.getConnection().execute(
+      'select count(*)::int as count from "inbox_messages" where "consumer_name" = ? and "message_id" = ?',
+      [consumerName, shutdownMessageId],
+    );
     expect(inboxRows[0].count).toBe(1);
   });
 
