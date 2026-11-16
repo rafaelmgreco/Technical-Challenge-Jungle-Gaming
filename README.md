@@ -40,7 +40,29 @@ bun test
 bun run test:e2e
 bun run sqs:up
 bun run test:sqs
+bun run test:load
 ```
+
+`bun run test:load` runs an optional, bounded load experiment against the local API. Start PostgreSQL and MiniStack, apply migrations, then start the application in another terminal before running it. By default, it sends 100 unique `BET` requests at concurrency 10 to one BRL wallet with enough balance for all requests, then samples metrics for 25 seconds so the integration-event outbox can drain. It prints one JSON report with the runtime, operating system, CPU and memory, PostgreSQL version, scenario parameters, throughput, success/error rates, response codes, p50/p95/p99 latency, lock-conflict counter delta, HTTP submission counter delta, sampled outbox lag, and pending events for the run.
+
+Tune the experiment with `LOAD_BASE_URL`, `LOAD_REQUESTS`, `LOAD_CONCURRENCY`, `LOAD_DRAIN_SECONDS`, and `LOAD_BET_AMOUNT` environment variables. `LOAD_BET_AMOUNT` must be a decimal string with two fractional digits, such as `1.00`. The script creates a uniquely named wallet and deletes its test records after all requests succeed and its outbox events are published; if requests fail or events remain pending, it retains those records and reports the wallet ID for inspection. Results describe the machine and local service setup used for that run; there is no target RPS.
+
+### Recorded local run
+
+Run on 2026-11-16 with Bun 1.4.4 on Windows x64, an Intel Core i5-9400F (6 logical CPUs), and 15.94 GiB of memory (2.25 GiB free at measurement time). PostgreSQL 17.12 ran in the project Docker Compose setup, with MiniStack 1.5.41 and one local API process. The scenario used the default 100 unique `BET` requests, concurrency 10, `BRL 1.00` per request, and a `BRL 100.00` wallet balance, followed by 25 seconds of outbox sampling.
+
+| Measure                                 |                      Result |
+| --------------------------------------- | --------------------------: |
+| Request phase duration                  |                     1.855 s |
+| Throughput                              |            53.92 requests/s |
+| Successful / failed                     |                     100 / 0 |
+| Error rate                              |                          0% |
+| Latency p50 / p95 / p99                 | 167.56 / 298.67 / 393.11 ms |
+| Wallet lock conflict counter delta      |                           0 |
+| Outbox lag, maximum sampled / final     |                18.385 / 0 s |
+| Pending events for this run after drain |                           0 |
+
+This is one local measurement, not a capacity claim. Host load, emulator behavior, and the single-process setup affect the result.
 
 PostgreSQL and MiniStack are not started automatically by the test runner. If `.env` does not exist, create it from `.env.example`, then start both services before running the integration suite:
 

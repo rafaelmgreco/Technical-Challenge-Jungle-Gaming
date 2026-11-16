@@ -20,6 +20,7 @@
     "test:cov": "bun test --coverage",
     "test:e2e": "bun test ./test",
     "test:sqs": "bun test test/sqs-integration-event-publisher.e2e.test.ts test/sqs-wager-transaction-consumer.e2e.test.ts",
+    "test:load": "bun scripts/test-load.ts",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
     "db:logs": "docker compose logs -f postgres",
