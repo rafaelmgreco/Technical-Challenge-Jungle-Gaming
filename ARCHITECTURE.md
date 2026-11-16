@@ -1,47 +1,47 @@
-# Decisões de arquitetura
+# Architecture decisions
 
-Este documento registra decisões conforme são implementadas. Decisões ainda não implementadas são marcadas como pendentes.
+This document records decisions as they are implemented. Decisions that are not implemented yet are listed as pending.
 
 ## WagerTransaction
 
-Uma transação nasce em `PENDING`.
+A transaction starts in `PENDING`.
 
-| Estado atual | Transições permitidas |
+| Current state | Allowed transitions |
 | --- | --- |
 | `PENDING` | `PENDING_REFERENCE`, `PROCESSED`, `REJECTED`, `FAILED` |
 | `PENDING_REFERENCE` | `PROCESSED`, `REJECTED`, `FAILED` |
-| `PROCESSED` | nenhuma; terminal |
-| `REJECTED` | nenhuma; terminal |
-| `FAILED` | nenhuma; terminal |
+| `PROCESSED` | none; terminal |
+| `REJECTED` | none; terminal |
+| `FAILED` | none; terminal |
 
-`PENDING_REFERENCE` só é permitido quando há uma referência externa para resolver. Ao processar uma transação referenciada, é necessário associar o identificador interno da transação de referência.
+`PENDING_REFERENCE` is only allowed when there is an external reference to resolve. Processing a referenced transaction requires associating the internal ID of the referenced transaction.
 
-`REFUND` e `ROLLBACK` exigem uma referência externa. `WIN` pode carregar uma referência opcional. Uma transação `LOSS` não altera o saldo. Todos os valores de transação precisam ser positivos.
+`REFUND` and `ROLLBACK` require an external reference. `WIN` may have an optional reference. A `LOSS` transaction does not change the balance. All transaction amounts must be positive.
 
-`OPENING` representa somente o crédito interno de abertura da carteira. Os adaptadores HTTP e SQS deverão rejeitar `OPENING` como operação submetida por provedor.
+`OPENING` represents only the internal opening credit for a wallet. The HTTP and SQS adapters must reject `OPENING` as a provider-submitted operation.
 
-Os códigos de falha são strings estáveis em formato maiúsculo legível por máquina, por exemplo `INSUFFICIENT_FUNDS`. A lista de códigos específicos do processamento financeiro será consolidada junto com os casos de uso.
+Failure codes are stable, uppercase, machine-readable strings, for example `INSUFFICIENT_FUNDS`. The financial processing use cases will define the specific failure codes.
 
 ## Ledger
 
-Cada `WalletLedgerEntry` é imutável e registra carteira, transação, direção, valor, saldo anterior, saldo posterior e instante de criação. A factory `create` exige moedas iguais, valor positivo, saldos não negativos e valida `saldo anterior ± valor = saldo posterior`. A unicidade de uma entrada por carteira e transação será garantida por constraint no PostgreSQL.
+Each `WalletLedgerEntry` is immutable and records the wallet, transaction, direction, amount, previous balance, resulting balance, and creation time. The `create` factory requires matching currencies, a positive amount, non-negative balances, and validates that `previous balance ± amount = resulting balance`. A PostgreSQL constraint will enforce one entry per wallet and transaction.
 
-| Transação | Direção |
+| Transaction | Direction |
 | --- | --- |
-| `OPENING` | crédito |
-| `BET` | débito |
-| `WIN` | crédito |
-| `LOSS` | sem entrada |
-| `REFUND` | crédito da `BET` referenciada |
-| `ROLLBACK` | direção oposta da `BET`, `WIN` ou `REFUND` referenciada |
+| `OPENING` | credit |
+| `BET` | debit |
+| `WIN` | credit |
+| `LOSS` | no entry |
+| `REFUND` | credit for the referenced `BET` |
+| `ROLLBACK` | opposite direction of the referenced `BET`, `WIN`, or `REFUND` |
 
-Referências financeiras precisam estar processadas e corresponder ao mesmo provedor, jogador, carteira, moeda e rodada. `REFUND` só aceita `BET`; `ROLLBACK` aceita `BET`, `WIN` ou `REFUND`; ambos exigem valor igual ao da referência. `WIN` pode referenciar uma `BET` sem exigir valor igual. `WagerTransaction.ledgerDirectionFor` aplica essas verificações antes de determinar a direção.
+Financial references must be processed and match the same provider, player, wallet, currency, and round. `REFUND` only accepts a `BET`; `ROLLBACK` accepts a `BET`, `WIN`, or `REFUND`; both require the same amount as the referenced transaction. `WIN` may reference a `BET` without requiring the same amount. `WagerTransaction.ledgerDirectionFor` performs these checks before determining the direction.
 
-## Próximas decisões
+## Pending decisions
 
-- Aplicar bloqueio pessimista por carteira dentro da transação SQL.
-- Definir o emulador de SQS local e as políticas de retry e DLQ.
+- Apply a pessimistic lock per wallet inside the SQL transaction.
+- Define the local SQS emulator and retry and DLQ policies.
 
-## Persistência local
+## Local persistence
 
-O PostgreSQL roda em Docker Compose, com a porta local limitada a `127.0.0.1`. O NestJS usa MikroORM 7 com o driver PostgreSQL. A migration inicial cria `wallets` com saldo em centavos `BIGINT`, unicidade por jogador e moeda, formato de moeda de três letras maiúsculas, saldo não negativo e versão positiva. A migration pode ser revertida e o teste de integração valida essas constraints no PostgreSQL.
+PostgreSQL runs through Docker Compose, with its port bound to `127.0.0.1`. NestJS uses MikroORM 7 with the PostgreSQL driver. The initial migration creates `wallets` with balances stored in minor units as `BIGINT`, uniqueness per player and currency, a three-uppercase-letter currency format, a non-negative balance, and a positive version. The migration can be rolled back, and the integration test validates these constraints against PostgreSQL.

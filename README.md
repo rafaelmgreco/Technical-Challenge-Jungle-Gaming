@@ -1,22 +1,22 @@
 # Distributed Wagering Processor
 
-Projeto para o [desafio técnico de backend da Jungle Gaming](https://github.com/junglegaming/backend-challenge).
+Project for the [Jungle Gaming backend challenge](https://github.com/junglegaming/backend-challenge).
 
 ## Stack
 
-- Bun 1.x como runtime, gerenciador de pacotes e executor de testes
-- TypeScript em modo estrito
+- Bun 1.x as the runtime, package manager, and test runner
+- TypeScript with strict mode enabled
 - NestJS
 - PostgreSQL
-- AWS SQS via LocalStack ou MiniStack
+- AWS SQS via LocalStack or MiniStack
 - Docker Compose
 - MikroORM
 
-## Estado atual
+## Current status
 
-Este repositório está no início: contém a aplicação NestJS mínima, o objeto de valor `Money`, o agregado `Wallet`, o modelo de transação de aposta e a entrada imutável do ledger. Persistência, concorrência e mensageria serão implementadas em etapas pequenas.
+The repository is in its early stages. It contains a minimal NestJS application, the `Money` value object, the `Wallet` aggregate, the wager transaction model, an immutable ledger entry, and the initial PostgreSQL wallet migration. Persistence, concurrency, and messaging will be implemented in small steps.
 
-## Começar
+## Getting started
 
 ```bash
 bun install
@@ -26,17 +26,17 @@ bun run db:migrate
 bun run start:dev
 ```
 
-A aplicação inicial responde em `http://localhost:3000/`.
+The application responds at `http://localhost:3000/`.
 
-O PostgreSQL local usa a porta `5432`. As credenciais padrão são apenas para desenvolvimento local; ajuste o arquivo `.env` se necessário.
+The local PostgreSQL instance uses port `5432`. The default credentials are for local development only; update `.env` if needed.
 
-## Testes
+## Tests
 
 ```bash
 bun test
 bun run test:e2e
 ```
 
-Os testes atuais cobrem o esqueleto, as regras de `Money`, `Wallet`, `WagerTransaction` e ledger, o endpoint inicial e as constraints da migration da carteira no PostgreSQL. Inicie o banco com `bun run db:up` antes de rodar os testes.
+The current tests cover the application scaffold, the rules for `Money`, `Wallet`, `WagerTransaction`, and the ledger, the initial endpoint, and the wallet migration constraints in PostgreSQL. Start the database with `bun run db:up` before running the tests.
 
-As transições de estado escolhidas para `WagerTransaction` estão em [ARCHITECTURE.md](./ARCHITECTURE.md).
+The selected `WagerTransaction` state transitions are documented in [ARCHITECTURE.md](./ARCHITECTURE.md).
