@@ -14,6 +14,7 @@ describe('WagerTransactionsController (e2e)', () => {
   let app: INestApplication<App>;
   let orm: MikroORM;
   let wallet: Wallet;
+  let anotherWallet: Wallet;
 
   beforeEach(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -30,20 +31,34 @@ describe('WagerTransactionsController (e2e)', () => {
       initialBalance: Money.from({ amount: '100.00', currency: 'BRL' }),
     });
     await new MikroOrmWalletRepository(orm.em.fork()).save(wallet);
+    anotherWallet = Wallet.open({
+      id: crypto.randomUUID(),
+      playerId: `http-provider-test-${crypto.randomUUID()}`,
+      initialBalance: Money.from({ amount: '100.00', currency: 'BRL' }),
+    });
+    await new MikroOrmWalletRepository(orm.em.fork()).save(anotherWallet);
   });
 
   afterEach(async () => {
-    if (orm && wallet) {
-      await orm.em.getConnection().execute(
-        'delete from "integration_event_outbox" where "aggregate_id" in (select "id" from "wager_transactions" where "wallet_id" = ?)',
-        [wallet.id],
-      );
-      await orm.em.getConnection().execute(
-        'delete from "wallet_ledger_entries" where "wallet_id" = ?',
-        [wallet.id],
-      );
-      await orm.em.getConnection().execute('delete from "wager_transactions" where "wallet_id" = ?', [wallet.id]);
-      await orm.em.getConnection().execute('delete from "wallets" where "id" = ?', [wallet.id]);
+    if (orm && wallet && anotherWallet) {
+      for (const fixtureWallet of [wallet, anotherWallet]) {
+        await orm.em.getConnection().execute(
+          'delete from "integration_event_outbox" where "aggregate_id" in (select "id" from "wager_transactions" where "wallet_id" = ?)',
+          [fixtureWallet.id],
+        );
+        await orm.em.getConnection().execute(
+          'delete from "wallet_ledger_entries" where "wallet_id" = ?',
+          [fixtureWallet.id],
+        );
+        await orm.em.getConnection().execute(
+          'delete from "wager_transactions" where "wallet_id" = ?',
+          [fixtureWallet.id],
+        );
+        await orm.em.getConnection().execute(
+          'delete from "wallets" where "id" = ?',
+          [fixtureWallet.id],
+        );
+      }
     }
     if (app) {
       await app.close();
@@ -192,6 +207,72 @@ describe('WagerTransactionsController (e2e)', () => {
     });
     expect(transactionRows[0].count).toBe(1);
     expect(ledgerRows[0].count).toBe(1);
+  });
+
+  it('processes concurrent submissions for different wallets independently', async () => {
+    const submissions = [
+      {
+        wallet: wallet,
+        externalTransactionId: `independent-wallet-a-${crypto.randomUUID()}`,
+        amount: '20.00',
+      },
+      {
+        wallet: anotherWallet,
+        externalTransactionId: `independent-wallet-b-${crypto.randomUUID()}`,
+        amount: '35.00',
+      },
+    ];
+
+    const responses = await Promise.all(
+      submissions.map(({ wallet: targetWallet, externalTransactionId, amount }) =>
+        request(app.getHttpServer())
+          .post('/wagering/transactions')
+          .set('Idempotency-Key', `http-provider:${externalTransactionId}`)
+          .send({
+            providerId: 'http-provider',
+            externalTransactionId,
+            playerId: targetWallet.playerId,
+            walletId: targetWallet.id,
+            roundId: `round-${externalTransactionId}`,
+            gameId: 'independent-wallet-game',
+            kind: 'BET',
+            money: { amount, currency: 'BRL' },
+          }),
+      ),
+    );
+
+    expect(responses.map((response) => response.status)).toEqual([201, 201]);
+    expect(responses.map((response) => response.body.status)).toEqual([
+      'PROCESSED',
+      'PROCESSED',
+    ]);
+    expect(responses[0]?.body.balance).toEqual({
+      amount: '80.00',
+      currency: 'BRL',
+    });
+    expect(responses[1]?.body.balance).toEqual({
+      amount: '65.00',
+      currency: 'BRL',
+    });
+
+    const balances = await Promise.all(
+      submissions.map(({ wallet: targetWallet }) =>
+        new MikroOrmWalletRepository(orm.em.fork()).findById(targetWallet.id),
+      ),
+    );
+    expect(balances.map((persistedWallet) => persistedWallet?.balance.toJSON())).toEqual([
+      { amount: '80.00', currency: 'BRL' },
+      { amount: '65.00', currency: 'BRL' },
+    ]);
+    const ledgerRows = await Promise.all(
+      submissions.map(({ wallet: targetWallet }) =>
+        orm.em.getConnection().execute(
+          'select count(*)::int as count from "wallet_ledger_entries" where "wallet_id" = ?',
+          [targetWallet.id],
+        ),
+      ),
+    );
+    expect(ledgerRows.map((rows) => rows[0].count)).toEqual([1, 1]);
   });
 
   it('returns not found for unknown transaction lookup keys', async () => {
