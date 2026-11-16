@@ -17,6 +17,7 @@ import { SqsIntegrationEventPublisher } from './infrastructure/messaging/sqs-int
 import { SubmitWagerTransactionService } from './application/submit-wager-transaction.service.js';
 import { SqsWagerTransactionConsumer } from './infrastructure/messaging/sqs-wager-transaction-consumer.js';
 import { ReconcileWalletService } from './application/reconcile-wallet.service.js';
+import { GetWalletService } from './application/get-wallet.service.js';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { ReconcileWalletService } from './application/reconcile-wallet.service.j
     },
     CreateWalletService,
     ReconcileWalletService,
+    GetWalletService,
     MikroOrmWalletUnitOfWork,
     { provide: WALLET_UNIT_OF_WORK, useExisting: MikroOrmWalletUnitOfWork },
   ],

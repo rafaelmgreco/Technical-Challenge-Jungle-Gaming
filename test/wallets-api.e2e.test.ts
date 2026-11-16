@@ -106,6 +106,27 @@ describe('WalletsController (e2e)', () => {
     expect(rows[0]).toEqual({ transactions: '0', entries: '0', events: '0' });
   });
 
+  it('returns a wallet by ID with its current balance and version', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/wallets')
+      .send({ playerId, initialBalance: { amount: '20.00', currency: 'BRL' } })
+      .expect(201);
+
+    const response = await request(app.getHttpServer())
+      .get(`/wallets/${created.body.id}`)
+      .expect(200);
+
+    expect(response.body).toEqual(created.body);
+  });
+
+  it('returns not found when requesting a wallet that does not exist', async () => {
+    const response = await request(app.getHttpServer())
+      .get(`/wallets/${crypto.randomUUID()}`)
+      .expect(404);
+
+    expect(response.body.code).toBe('WALLET_NOT_FOUND');
+  });
+
   it('reconciles the stored wallet balance against its immutable ledger', async () => {
     const created = await request(app.getHttpServer())
       .post('/wallets')

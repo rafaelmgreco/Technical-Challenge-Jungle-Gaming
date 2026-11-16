@@ -3,14 +3,16 @@ import {
   ConflictException,
   Body,
   Controller,
+  Get,
   HttpStatus,
   NotFoundException,
-  Post,
   Param,
+  Post,
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { CreateWalletService, WalletAlreadyExistsError } from '../application/create-wallet.service.js';
+import { GetWalletService, WalletNotFoundError } from '../application/get-wallet.service.js';
 import {
   ReconcileWalletService,
   WalletNotFoundForReconciliationError,
@@ -31,8 +33,30 @@ function requiredString(value: unknown, field: string): string {
 export class WalletsController {
   constructor(
     private readonly createWallet: CreateWalletService,
+    private readonly getWallet: GetWalletService,
     private readonly reconcileWallet: ReconcileWalletService,
   ) {}
+
+  @Get(':walletId')
+  async getById(@Param('walletId') walletId: string): Promise<Record<string, unknown>> {
+    try {
+      const wallet = await this.getWallet.get(walletId);
+      return {
+        id: wallet.id,
+        playerId: wallet.playerId,
+        balance: wallet.balance.toJSON(),
+        version: wallet.version,
+      };
+    } catch (error) {
+      if (error instanceof WalletNotFoundError) {
+        throw new NotFoundException({
+          code: 'WALLET_NOT_FOUND',
+          message: error.message,
+        });
+      }
+      throw error;
+    }
+  }
 
   @Post(':walletId/reconciliation')
   async reconcile(
