@@ -8,11 +8,17 @@ import {
   NotFoundException,
   Param,
   Post,
+  Query,
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { CreateWalletService, WalletAlreadyExistsError } from '../application/create-wallet.service.js';
 import { GetWalletService, WalletNotFoundError } from '../application/get-wallet.service.js';
+import {
+  GetWalletLedgerPageService,
+  InvalidLedgerCursorError,
+  InvalidLedgerPageSizeError,
+} from '../application/get-wallet-ledger-page.service.js';
 import {
   ReconcileWalletService,
   WalletNotFoundForReconciliationError,
@@ -34,8 +40,55 @@ export class WalletsController {
   constructor(
     private readonly createWallet: CreateWalletService,
     private readonly getWallet: GetWalletService,
+    private readonly getWalletLedgerPage: GetWalletLedgerPageService,
     private readonly reconcileWallet: ReconcileWalletService,
   ) {}
+
+  @Get(':walletId/ledger')
+  async getLedgerPage(
+    @Param('walletId') walletId: string,
+    @Query('cursor') cursor: string | undefined,
+    @Query('limit') rawLimit: string | undefined,
+  ): Promise<Record<string, unknown>> {
+    let limit: number | undefined;
+    if (rawLimit !== undefined) {
+      if (!/^\d+$/.test(rawLimit)) {
+        throw new BadRequestException({
+          code: 'INVALID_LEDGER_PAGE_SIZE',
+          message: 'limit must be an integer between 1 and 100',
+        });
+      }
+      limit = Number(rawLimit);
+    }
+
+    try {
+      return await this.getWalletLedgerPage.getPage({
+        walletId,
+        ...(cursor === undefined ? {} : { cursor }),
+        ...(limit === undefined ? {} : { limit }),
+      });
+    } catch (error) {
+      if (error instanceof WalletNotFoundError) {
+        throw new NotFoundException({
+          code: 'WALLET_NOT_FOUND',
+          message: error.message,
+        });
+      }
+      if (error instanceof InvalidLedgerPageSizeError) {
+        throw new BadRequestException({
+          code: 'INVALID_LEDGER_PAGE_SIZE',
+          message: error.message,
+        });
+      }
+      if (error instanceof InvalidLedgerCursorError) {
+        throw new BadRequestException({
+          code: 'INVALID_LEDGER_CURSOR',
+          message: error.message,
+        });
+      }
+      throw error;
+    }
+  }
 
   @Get(':walletId')
   async getById(@Param('walletId') walletId: string): Promise<Record<string, unknown>> {

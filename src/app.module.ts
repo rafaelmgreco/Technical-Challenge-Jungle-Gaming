@@ -18,6 +18,7 @@ import { SubmitWagerTransactionService } from './application/submit-wager-transa
 import { SqsWagerTransactionConsumer } from './infrastructure/messaging/sqs-wager-transaction-consumer.js';
 import { ReconcileWalletService } from './application/reconcile-wallet.service.js';
 import { GetWalletService } from './application/get-wallet.service.js';
+import { GetWalletLedgerPageService } from './application/get-wallet-ledger-page.service.js';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { GetWalletService } from './application/get-wallet.service.js';
     CreateWalletService,
     ReconcileWalletService,
     GetWalletService,
+    GetWalletLedgerPageService,
     MikroOrmWalletUnitOfWork,
     { provide: WALLET_UNIT_OF_WORK, useExisting: MikroOrmWalletUnitOfWork },
   ],

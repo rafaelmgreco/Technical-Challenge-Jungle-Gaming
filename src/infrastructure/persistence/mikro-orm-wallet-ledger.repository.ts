@@ -2,7 +2,10 @@ import { Inject, Injectable } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/core';
 import { Money } from '../../domain/money/money.js';
 import { LedgerDirection, WalletLedgerEntry } from '../../domain/ledger/ledger-entry.js';
-import type { WalletLedgerRepository } from '../../application/ports/wallet-ledger.repository.js';
+import type {
+  WalletLedgerCursor,
+  WalletLedgerRepository,
+} from '../../application/ports/wallet-ledger.repository.js';
 import { WalletLedgerEntryEntity } from '../database/wallet-ledger-entry.entity.js';
 
 @Injectable()
@@ -23,6 +26,27 @@ export class MikroOrmWalletLedgerRepository implements WalletLedgerRepository {
       { walletId },
       { orderBy: { createdAt: 'ASC', id: 'ASC' } },
     );
+    return entities.map((entity) => this.toDomain(entity));
+  }
+
+  async findByWalletPage(
+    walletId: string,
+    after: WalletLedgerCursor | undefined,
+    limit: number,
+  ): Promise<WalletLedgerEntry[]> {
+    const where = after
+      ? {
+          walletId,
+          $or: [
+            { createdAt: { $gt: after.createdAt } },
+            { createdAt: after.createdAt, id: { $gt: after.id } },
+          ],
+        }
+      : { walletId };
+    const entities = await this.em.find(WalletLedgerEntryEntity, where, {
+      orderBy: { createdAt: 'ASC', id: 'ASC' },
+      limit,
+    });
     return entities.map((entity) => this.toDomain(entity));
   }
 

@@ -32,7 +32,7 @@ Registration treats a retry with the same provider, idempotency key, and payload
 
 Authentication is not implemented in this local challenge prototype. Before external exposure, the controller should use a `ProviderIdentityPort` backed by an external OIDC identity provider; health endpoints can remain public.
 
-`POST /wallets` accepts `playerId` and an `initialBalance` decimal string with an ISO-4217 currency. A second wallet for the same player and currency returns a conflict; the same player can have wallets in different currencies. `GET /wallets/:walletId` returns the stored wallet state or `404`. `POST /wallets/:walletId/reconciliation` sums immutable ledger movements, checks their arithmetic and currency, and compares the result with the stored balance. It reports discrepancies without changing financial data.
+`POST /wallets` accepts `playerId` and an `initialBalance` decimal string with an ISO-4217 currency. A second wallet for the same player and currency returns a conflict; the same player can have wallets in different currencies. `GET /wallets/:walletId` returns the stored wallet state or `404`. `GET /wallets/:walletId/ledger` uses keyset pagination ordered by `(createdAt, id)` with a base64url cursor; page size defaults to 50 and is limited to 100. `POST /wallets/:walletId/reconciliation` sums immutable ledger movements, checks their arithmetic and currency, and compares the result with the stored balance. It reports discrepancies without changing financial data.
 
 ## Ledger
 

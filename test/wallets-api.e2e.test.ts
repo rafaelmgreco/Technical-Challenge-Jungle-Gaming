@@ -127,6 +127,69 @@ describe('WalletsController (e2e)', () => {
     expect(response.body.code).toBe('WALLET_NOT_FOUND');
   });
 
+  it('paginates a wallet ledger with a stable opaque cursor', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/wallets')
+      .send({ playerId, initialBalance: { amount: '100.00', currency: 'BRL' } })
+      .expect(201);
+
+    for (const externalTransactionId of ['ledger-bet-1', 'ledger-bet-2']) {
+      await request(app.getHttpServer())
+        .post('/wagering/transactions')
+        .set('Idempotency-Key', `wallet-api:${externalTransactionId}`)
+        .send({
+          providerId: 'wallet-api',
+          externalTransactionId,
+          playerId,
+          walletId: created.body.id,
+          roundId: 'ledger-pagination-round',
+          gameId: 'ledger-pagination-game',
+          kind: 'BET',
+          money: { amount: '10.00', currency: 'BRL' },
+        })
+        .expect(201);
+    }
+
+    const firstPage = await request(app.getHttpServer())
+      .get(`/wallets/${created.body.id}/ledger?limit=2`)
+      .expect(200);
+    expect(firstPage.body.walletId).toBe(created.body.id);
+    expect(firstPage.body.entries).toHaveLength(2);
+    expect(firstPage.body.nextCursor).toEqual(expect.any(String));
+
+    const secondPage = await request(app.getHttpServer())
+      .get(
+        `/wallets/${created.body.id}/ledger?limit=2&cursor=${encodeURIComponent(firstPage.body.nextCursor)}`,
+      )
+      .expect(200);
+    expect(secondPage.body.entries).toHaveLength(1);
+    expect(secondPage.body.nextCursor).toBeNull();
+    const allEntries = [...firstPage.body.entries, ...secondPage.body.entries];
+    expect(new Set(allEntries.map((entry) => entry.id)).size).toBe(3);
+    expect(
+      allEntries
+        .map((entry) => entry.direction)
+        .sort((left, right) => left.localeCompare(right)),
+    ).toEqual(['CREDIT', 'DEBIT', 'DEBIT']);
+  });
+
+  it('rejects malformed ledger cursors and page sizes', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/wallets')
+      .send({ playerId, initialBalance: { amount: '0.00', currency: 'BRL' } })
+      .expect(201);
+
+    const invalidCursor = await request(app.getHttpServer())
+      .get(`/wallets/${created.body.id}/ledger?cursor=not-a-cursor`)
+      .expect(400);
+    expect(invalidCursor.body.code).toBe('INVALID_LEDGER_CURSOR');
+
+    const invalidLimit = await request(app.getHttpServer())
+      .get(`/wallets/${created.body.id}/ledger?limit=101`)
+      .expect(400);
+    expect(invalidLimit.body.code).toBe('INVALID_LEDGER_PAGE_SIZE');
+  });
+
   it('reconciles the stored wallet balance against its immutable ledger', async () => {
     const created = await request(app.getHttpServer())
       .post('/wallets')
