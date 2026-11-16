@@ -18,9 +18,17 @@
     "test": "bun test",
     "test:watch": "bun test --watch",
     "test:cov": "bun test --coverage",
-    "test:e2e": "bun test ./test"
+    "test:e2e": "bun test ./test",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f postgres"
   },
   "dependencies": {
+    "@mikro-orm/core": "^7.2.9",
+    "@mikro-orm/decorators": "^7.2.9",
+    "@mikro-orm/migrations": "^7.2.9",
+    "@mikro-orm/nestjs": "^7.1.0",
+    "@mikro-orm/postgresql": "^7.2.9",
     "@nestjs/common": "^12.0.1",
     "@nestjs/core": "^12.0.1",
     "@nestjs/platform-express": "^12.0.1",

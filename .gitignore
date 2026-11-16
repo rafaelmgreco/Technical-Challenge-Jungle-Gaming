@@ -6,3 +6,7 @@ coverage/
 .env.*
 !.env.example
 .bun-tmp/
+
+/mikro-orm.config.js
+/mikro-orm.config.js.map
+/mikro-orm.config.d.ts

@@ -6,7 +6,7 @@ import { App } from 'supertest/types.js';
 import { AppModule } from './../src/app.module.js';
 
 describe('AppController (e2e)', () => {
-  let app: INestApplication<App>;
+  let app: INestApplication<App> | undefined;
 
   beforeEach(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -18,6 +18,10 @@ describe('AppController (e2e)', () => {
   });
 
   it('/ (GET)', () => {
+    if (!app) {
+      throw new Error('Nest application was not initialized');
+    }
+
     return request(app.getHttpServer())
       .get('/')
       .expect(200)
@@ -25,6 +29,9 @@ describe('AppController (e2e)', () => {
   });
 
   afterEach(async () => {
-    await app.close();
+    if (app) {
+      await app.close();
+      app = undefined;
+    }
   });
 });
