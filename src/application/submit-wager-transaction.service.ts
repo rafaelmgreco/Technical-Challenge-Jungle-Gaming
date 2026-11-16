@@ -4,6 +4,7 @@ import { Money } from '../domain/money/money.js';
 import { InsufficientWalletFundsError } from '../domain/wallet/wallet.js';
 import {
   WagerTransactionKind,
+  InvalidWagerTransactionStateError,
   WagerTransactionStatus,
 } from '../domain/wager-transaction/wager-transaction.js';
 import { RegisterWagerTransactionService } from './register-wager-transaction.service.js';
@@ -159,6 +160,48 @@ export class SubmitWagerTransactionService {
           };
         }
         if (error instanceof WalletNotFoundError) throw error;
+        if (
+          error instanceof InvalidWagerTransactionStateError &&
+          registration.replayed
+        ) {
+          const persisted = await this.unitOfWork.execute(
+            async ({ transactions, ledger }) => {
+              const current = await transactions.findById(transaction.id);
+              return {
+                transaction: current,
+                entry: await ledger.findByWalletAndTransactionId(
+                  transaction.walletId,
+                  transaction.id,
+                ),
+              };
+            },
+          );
+          if (
+            persisted.transaction?.status === WagerTransactionStatus.Processed
+          ) {
+            const balance =
+              persisted.transaction.processedBalance ??
+              persisted.entry?.balanceAfter;
+            if (balance) {
+              return {
+                transactionId: persisted.transaction.id,
+                status: persisted.transaction.status,
+                balance: balance.toJSON(),
+                idempotentReplay: true,
+              };
+            }
+          }
+          if (
+            persisted.transaction?.status === WagerTransactionStatus.Rejected
+          ) {
+            return {
+              transactionId: persisted.transaction.id,
+              status: persisted.transaction.status,
+              failureCode: persisted.transaction.failureCode,
+              idempotentReplay: true,
+            };
+          }
+        }
         throw error;
       }
     }

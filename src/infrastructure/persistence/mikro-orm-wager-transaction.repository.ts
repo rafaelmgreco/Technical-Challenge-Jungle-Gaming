@@ -22,7 +22,7 @@ export class MikroOrmWagerTransactionRepository implements WagerTransactionRepos
     const entity = await this.em.findOne(
       WagerTransactionEntity,
       { id },
-      { lockMode: LockMode.PESSIMISTIC_WRITE },
+      { lockMode: LockMode.PESSIMISTIC_WRITE, refresh: true },
     );
     return entity ? this.toDomain(entity) : null;
   }

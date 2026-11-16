@@ -49,7 +49,9 @@ export class RegisterWagerTransactionService {
           props.externalTransactionId,
         );
         if (externalTransaction) {
-          return { kind: 'external-conflict', transaction: externalTransaction };
+          return externalTransaction.idempotencyKey === props.idempotencyKey
+            ? { kind: 'idempotency-match', transaction: externalTransaction }
+            : { kind: 'external-conflict', transaction: externalTransaction };
         }
 
         const transaction = WagerTransaction.create(props);
@@ -100,7 +102,9 @@ export class RegisterWagerTransactionService {
           props.externalTransactionId,
         );
         return byExternalId
-          ? { kind: 'external-conflict', transaction: byExternalId }
+          ? byExternalId.idempotencyKey === props.idempotencyKey
+            ? { kind: 'idempotency-match', transaction: byExternalId }
+            : { kind: 'external-conflict', transaction: byExternalId }
           : null;
       });
     } catch {

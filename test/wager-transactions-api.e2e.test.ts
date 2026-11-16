@@ -146,6 +146,54 @@ describe('WagerTransactionsController (e2e)', () => {
     });
   });
 
+  it('applies 50 concurrent identical submissions as a single wallet debit', async () => {
+    const externalTransactionId = `concurrent-50-${crypto.randomUUID()}`;
+    const idempotencyKey = `http-provider:${externalTransactionId}`;
+    const body = {
+      providerId: 'http-provider',
+      externalTransactionId,
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'concurrent-50-round',
+      gameId: 'concurrent-50-game',
+      kind: 'BET',
+      money: { amount: '80.00', currency: 'BRL' },
+    };
+
+    const responses = await Promise.all(
+      Array.from({ length: 50 }, () =>
+        request(app.getHttpServer())
+          .post('/wagering/transactions')
+          .set('Idempotency-Key', idempotencyKey)
+          .send(body),
+      ),
+    );
+    expect(responses.filter((response) => response.status === 201)).toHaveLength(1);
+    expect(responses.filter((response) => response.status === 200)).toHaveLength(49);
+    expect(responses.every((response) => response.body.status === 'PROCESSED')).toBe(true);
+    expect(
+      new Set(responses.map((response) => response.body.transactionId)).size,
+    ).toBe(1);
+
+    const persistedWallet = await new MikroOrmWalletRepository(
+      orm.em.fork(),
+    ).findById(wallet.id);
+    const transactionRows = await orm.em.getConnection().execute(
+      'select count(*)::int as count from "wager_transactions" where "provider_id" = ? and "external_transaction_id" = ?',
+      ['http-provider', externalTransactionId],
+    );
+    const ledgerRows = await orm.em.getConnection().execute(
+      'select count(*)::int as count from "wallet_ledger_entries" where "wallet_id" = ? and "transaction_id" = ?',
+      [wallet.id, responses[0]?.body.transactionId],
+    );
+    expect(persistedWallet?.balance.toJSON()).toEqual({
+      amount: '20.00',
+      currency: 'BRL',
+    });
+    expect(transactionRows[0].count).toBe(1);
+    expect(ledgerRows[0].count).toBe(1);
+  });
+
   it('returns not found for unknown transaction lookup keys', async () => {
     const byId = await request(app.getHttpServer())
       .get(`/wagering/transactions/${crypto.randomUUID()}`)
