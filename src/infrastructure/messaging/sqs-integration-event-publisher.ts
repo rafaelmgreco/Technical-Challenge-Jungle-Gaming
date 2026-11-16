@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import type { IntegrationEventPublisher } from '../../application/ports/integration-event-publisher.js';
 import type { IntegrationEventRecord } from '../../application/ports/integration-event-outbox.repository.js';
+import { serializeIntegrationEvent } from './integration-event-envelope.js';
 
 @Injectable()
 export class SqsIntegrationEventPublisher implements IntegrationEventPublisher {
@@ -31,7 +32,7 @@ export class SqsIntegrationEventPublisher implements IntegrationEventPublisher {
     const walletId = event.data.walletId;
     const command = new SendMessageCommand({
       QueueUrl: queueUrl,
-      MessageBody: JSON.stringify(event),
+      MessageBody: serializeIntegrationEvent(event),
       ...(queueUrl.endsWith('.fifo')
         ? {
             MessageGroupId:

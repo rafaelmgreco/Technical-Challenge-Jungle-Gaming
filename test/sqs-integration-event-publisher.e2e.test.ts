@@ -31,6 +31,7 @@ describe.skipIf(!enabled)('SQS integration event publisher', () => {
       correlationId: crypto.randomUUID(),
       occurredAt: new Date(),
       data: { walletId: crypto.randomUUID(), failureCode: 'INVALID_REFERENCE' },
+      attempts: 3,
     };
 
     await new SqsIntegrationEventPublisher().publish(event);
@@ -47,9 +48,15 @@ describe.skipIf(!enabled)('SQS integration event publisher', () => {
       const message = result.Messages?.[0];
       if (message?.Body && message.ReceiptHandle) {
         expect(JSON.parse(message.Body)).toEqual({
-          ...event,
+          id: event.id,
+          aggregateId: event.aggregateId,
+          eventType: event.eventType,
+          version: event.version,
+          correlationId: event.correlationId,
           occurredAt: event.occurredAt.toISOString(),
+          data: event.data,
         });
+        expect(JSON.parse(message.Body)).not.toHaveProperty('attempts');
         await client.send(
           new DeleteMessageCommand({
             QueueUrl: queueUrl,

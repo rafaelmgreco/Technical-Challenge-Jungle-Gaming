@@ -55,9 +55,20 @@ Wallet debits and credits run through a unit of work backed by a PostgreSQL tran
 
 Wallet creation also runs in one PostgreSQL transaction. A positive initial balance creates an internal `OPENING` transaction and its matching `CREDIT` ledger entry; a zero balance creates neither. `OPENING` is not accepted by the provider transaction endpoint.
 
-## Pending decisions
+## Integration event contract
 
-- Define and version the externally published event payload contract, including delivery and consumer compatibility expectations.
+The SQS integration event contract is a JSON envelope with `id`, `aggregateId`, `eventType`, `version`, `correlationId`, optional `causationId`, ISO-8601 UTC `occurredAt`, and `data`. `version` identifies the payload schema for the given `eventType`; incompatible changes require a new version, and consumers must deduplicate delivery by `id` and support the event versions they subscribe to. Database-only outbox metadata such as publish attempts is never sent to SQS.
+
+The version 1 event data fields are:
+
+| Event | Data fields |
+| --- | --- |
+| `WagerTransactionPendingReference` | `transactionId`, `providerId`, `externalTransactionId`, `referenceExternalTransactionId`, `walletId`, `kind` |
+| `WagerTransactionRejected` | `transactionId`, `providerId`, `externalTransactionId`, `walletId`, `kind`, `failureCode` |
+| `WagerTransactionProcessed` | `transactionId`, `providerId`, `externalTransactionId`, `walletId`, `kind`, `money`, optional `referenceTransactionId`, and processed `balance` snapshot |
+| `WalletBalanceChanged` | `walletId`, `transactionId`, `direction`, `money`, `balanceBefore`, `balanceAfter`, `walletVersion` |
+
+Every money object uses an exact decimal string and currency code. Delivery remains at least once: consumers must treat repeated event IDs as duplicates. The public envelope is explicitly mapped from the outbox record so persistence-only fields cannot leak into the message.
 
 ## Local persistence
 
