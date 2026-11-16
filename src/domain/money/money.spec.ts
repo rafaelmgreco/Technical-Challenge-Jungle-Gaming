@@ -11,6 +11,7 @@ describe('Money', () => {
 
     expect(money.toString()).toBe('25.07');
     expect(money.toJSON()).toEqual({ amount: '25.07', currency: 'BRL' });
+    expect(money.toMinorUnits()).toBe(2507n);
   });
 
   it('normalizes leading zeroes while preserving two decimal places', () => {

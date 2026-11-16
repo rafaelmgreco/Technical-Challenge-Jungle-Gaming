@@ -37,11 +37,14 @@ Each `WalletLedgerEntry` is immutable and records the wallet, transaction, direc
 
 Financial references must be processed and match the same provider, player, wallet, currency, and round. `REFUND` only accepts a `BET`; `ROLLBACK` accepts a `BET`, `WIN`, or `REFUND`; both require the same amount as the referenced transaction. `WIN` may reference a `BET` without requiring the same amount. `WagerTransaction.ledgerDirectionFor` performs these checks before determining the direction.
 
+## Wallet movement concurrency
+
+Wallet debits and credits run through a unit of work backed by a PostgreSQL transaction. The repository loads the wallet with `PESSIMISTIC_WRITE`, so concurrent movements for the same wallet are serialized before the domain balance is changed. A failed domain movement aborts the transaction without saving a partial update.
+
 ## Pending decisions
 
-- Apply a pessimistic lock per wallet inside the SQL transaction.
 - Define the local SQS emulator and retry and DLQ policies.
 
 ## Local persistence
 
-PostgreSQL runs through Docker Compose, with its port bound to `127.0.0.1`. NestJS uses MikroORM 7 with the PostgreSQL driver. The initial migration creates `wallets` with balances stored in minor units as `BIGINT`, uniqueness per player and currency, a three-uppercase-letter currency format, a non-negative balance, and a positive version. The migration can be rolled back, and the integration test validates these constraints against PostgreSQL.
+PostgreSQL runs through Docker Compose, with its port bound to `127.0.0.1`. NestJS uses MikroORM 7 with the PostgreSQL driver. The initial migration creates `wallets` with balances stored in minor units as `BIGINT`, uniqueness per player and currency, a three-uppercase-letter currency format, a non-negative balance, and a positive version. The migration can be rolled back, and integration tests validate these constraints, repository round-trips, and concurrent wallet movements against PostgreSQL.

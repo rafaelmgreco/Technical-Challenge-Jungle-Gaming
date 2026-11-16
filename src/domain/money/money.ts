@@ -105,6 +105,10 @@ export class Money {
     return { amount: this.toString(), currency: this.currency };
   }
 
+  toMinorUnits(): bigint {
+    return this.minorUnits;
+  }
+
   toString(): string {
     const negative = this.minorUnits < 0n;
     const absoluteValue = negative ? -this.minorUnits : this.minorUnits;
