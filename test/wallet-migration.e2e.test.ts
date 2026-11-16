@@ -49,6 +49,18 @@ describe('wallet database migration', () => {
     ]);
   });
 
+  it('rejects ledger entries with a different wallet currency or an unbalanced movement', async () => {
+    const insertLedgerEntry = (currency: string, balanceAfter: string) =>
+      orm.em.getConnection().execute(
+        `insert into "wallet_ledger_entries" ("id", "wallet_id", "transaction_id", "direction", "currency", "amount_minor_units", "balance_before_minor_units", "balance_after_minor_units", "created_at")
+         values (?, ?, ?, ?, ?, ?, ?, ?, now())`,
+        [crypto.randomUUID(), walletId, crypto.randomUUID(), 'DEBIT', currency, '100', '1000', balanceAfter],
+      );
+
+    await expectConstraintViolation(insertLedgerEntry('USD', '900'));
+    await expectConstraintViolation(insertLedgerEntry('BRL', '899'));
+  });
+
   it('rejects a second wallet for the same player and currency', async () => {
     await expectConstraintViolation(
       orm.em.getConnection().execute(

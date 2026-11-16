@@ -24,7 +24,7 @@ Failure codes are stable, uppercase, machine-readable strings, for example `INSU
 
 ## Ledger
 
-Each `WalletLedgerEntry` is immutable and records the wallet, transaction, direction, amount, previous balance, resulting balance, and creation time. The `create` factory requires matching currencies, a positive amount, non-negative balances, and validates that `previous balance ± amount = resulting balance`. A PostgreSQL constraint will enforce one entry per wallet and transaction.
+Each `WalletLedgerEntry` is immutable and records the wallet, transaction, direction, amount, previous balance, resulting balance, and creation time. The `create` factory requires matching currencies, a positive amount, non-negative balances, and validates that `previous balance ± amount = resulting balance`. PostgreSQL enforces one entry per wallet and transaction, validates the balance arithmetic, and ensures the ledger currency matches the wallet.
 
 | Transaction | Direction |
 | --- | --- |
@@ -39,7 +39,7 @@ Financial references must be processed and match the same provider, player, wall
 
 ## Wallet movement concurrency
 
-Wallet debits and credits run through a unit of work backed by a PostgreSQL transaction. The repository loads the wallet with `PESSIMISTIC_WRITE`, so concurrent movements for the same wallet are serialized before the domain balance is changed. A failed domain movement aborts the transaction without saving a partial update.
+Wallet debits and credits run through a unit of work backed by a PostgreSQL transaction. The repository loads the wallet with `PESSIMISTIC_WRITE`, so concurrent movements for the same wallet are serialized before the domain balance is changed. The wallet update and immutable ledger entry are saved in the same transaction. A failed movement or ledger insert aborts the transaction without saving a partial update.
 
 ## Pending decisions
 
@@ -47,4 +47,4 @@ Wallet debits and credits run through a unit of work backed by a PostgreSQL tran
 
 ## Local persistence
 
-PostgreSQL runs through Docker Compose, with its port bound to `127.0.0.1`. NestJS uses MikroORM 7 with the PostgreSQL driver. The initial migration creates `wallets` with balances stored in minor units as `BIGINT`, uniqueness per player and currency, a three-uppercase-letter currency format, a non-negative balance, and a positive version. The migration can be rolled back, and integration tests validate these constraints, repository round-trips, and concurrent wallet movements against PostgreSQL.
+PostgreSQL runs through Docker Compose, with its port bound to `127.0.0.1`. NestJS uses MikroORM 7 with the PostgreSQL driver. Reversible migrations create `wallets` and `wallet_ledger_entries`. Wallet balances, ledger amounts, and balance snapshots use minor units as `BIGINT`; constraints protect wallet uniqueness, ledger uniqueness, matching currencies, and balanced entries. Integration tests validate the schema, repository round-trips, transaction rollback, and concurrent wallet movements against PostgreSQL.

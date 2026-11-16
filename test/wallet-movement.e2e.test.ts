@@ -4,6 +4,7 @@ import { Money } from '../src/domain/money/money.js';
 import { InsufficientWalletFundsError, Wallet } from '../src/domain/wallet/wallet.js';
 import mikroOrmConfig from '../src/infrastructure/database/mikro-orm.config.js';
 import { MikroOrmWalletRepository } from '../src/infrastructure/persistence/mikro-orm-wallet.repository.js';
+import { MikroOrmWalletLedgerRepository } from '../src/infrastructure/persistence/mikro-orm-wallet-ledger.repository.js';
 import { MikroOrmWalletUnitOfWork } from '../src/infrastructure/persistence/mikro-orm-wallet-unit-of-work.js';
 import { WalletMovementService } from '../src/application/wallet-movement.service.js';
 
@@ -20,6 +21,10 @@ describe('wallet movement transactions', () => {
 
   afterAll(async () => {
     if (orm) {
+      await orm.em.getConnection().execute(
+        'delete from "wallet_ledger_entries" where "wallet_id" in (select "id" from "wallets" where "player_id" like ?)',
+        [`${playerId}%`],
+      );
       await orm.em.getConnection().execute('delete from "wallets" where "player_id" like ?', [`${playerId}%`]);
       await orm.close(true);
     }
@@ -33,9 +38,11 @@ describe('wallet movement transactions', () => {
     });
     await new MikroOrmWalletRepository(orm.em.fork()).save(wallet);
 
+    const transactionIds = [crypto.randomUUID(), crypto.randomUUID()];
+
     const results = await Promise.allSettled([
-      movementService.debit(wallet.id, Money.from({ amount: '80.00', currency: 'BRL' })),
-      movementService.debit(wallet.id, Money.from({ amount: '80.00', currency: 'BRL' })),
+      movementService.debit(wallet.id, transactionIds[0]!, Money.from({ amount: '80.00', currency: 'BRL' })),
+      movementService.debit(wallet.id, transactionIds[1]!, Money.from({ amount: '80.00', currency: 'BRL' })),
     ]);
 
     const successful = results.filter((result) => result.status === 'fulfilled');
@@ -49,5 +56,44 @@ describe('wallet movement transactions', () => {
     const persisted = await new MikroOrmWalletRepository(orm.em.fork()).findById(wallet.id);
     expect(persisted?.balance.toJSON()).toEqual({ amount: '20.00', currency: 'BRL' });
     expect(persisted?.version).toBe(2);
+
+    const ledger = new MikroOrmWalletLedgerRepository(orm.em.fork());
+    const entries = await Promise.all(
+      transactionIds.map((transactionId) => ledger.findByWalletAndTransactionId(wallet.id, transactionId)),
+    );
+    const persistedEntry = entries.find((entry) => entry !== null);
+    expect(entries.filter((entry) => entry !== null)).toHaveLength(1);
+    expect(persistedEntry?.money.toJSON()).toEqual({ amount: '80.00', currency: 'BRL' });
+    expect(persistedEntry?.balanceBefore.toJSON()).toEqual({ amount: '100.00', currency: 'BRL' });
+    expect(persistedEntry?.balanceAfter.toJSON()).toEqual({ amount: '20.00', currency: 'BRL' });
+  });
+
+  it('rolls back the wallet update when the ledger rejects a duplicate transaction', async () => {
+    const wallet = Wallet.open({
+      id: crypto.randomUUID(),
+      playerId: `${playerId}-duplicate`,
+      initialBalance: Money.from({ amount: '50.00', currency: 'BRL' }),
+    });
+    await new MikroOrmWalletRepository(orm.em.fork()).save(wallet);
+    const transactionId = crypto.randomUUID();
+
+    await movementService.debit(wallet.id, transactionId, Money.from({ amount: '10.00', currency: 'BRL' }));
+
+    let rejected = false;
+    try {
+      await movementService.debit(wallet.id, transactionId, Money.from({ amount: '5.00', currency: 'BRL' }));
+    } catch {
+      rejected = true;
+    }
+    expect(rejected).toBe(true);
+
+    const persisted = await new MikroOrmWalletRepository(orm.em.fork()).findById(wallet.id);
+    const entry = await new MikroOrmWalletLedgerRepository(orm.em.fork()).findByWalletAndTransactionId(
+      wallet.id,
+      transactionId,
+    );
+    expect(persisted?.balance.toJSON()).toEqual({ amount: '40.00', currency: 'BRL' });
+    expect(persisted?.version).toBe(2);
+    expect(entry?.money.toJSON()).toEqual({ amount: '10.00', currency: 'BRL' });
   });
 });
