@@ -53,6 +53,8 @@ export class MikroOrmIntegrationEventOutboxRepository implements IntegrationEven
         returning outbox."id", outbox."aggregate_id", outbox."event_type", outbox."version",
           outbox."correlation_id", outbox."causation_id", outbox."occurred_at", outbox."data", outbox."attempts"`,
           [input.at, input.at, input.limit, input.workerId, input.leaseUntil],
+          'all',
+          em.getTransactionContext(),
         );
 
       return rows.map((row: Record<string, unknown>) => ({
@@ -82,6 +84,7 @@ export class MikroOrmIntegrationEventOutboxRepository implements IntegrationEven
        where "id" = ? and "lease_owner" = ? and "published_at" is null`,
       [input.at, input.eventId, input.workerId],
       'run',
+      this.em.getTransactionContext(),
     );
     return affected.affectedRows > 0;
   }
@@ -97,6 +100,7 @@ export class MikroOrmIntegrationEventOutboxRepository implements IntegrationEven
        where "id" = ? and "lease_owner" = ? and "published_at" is null`,
       [input.nextAttemptAt, input.eventId, input.workerId],
       'run',
+      this.em.getTransactionContext(),
     );
     return affected.affectedRows > 0;
   }

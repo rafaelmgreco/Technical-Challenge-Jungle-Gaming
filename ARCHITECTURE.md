@@ -57,7 +57,7 @@ Wallet creation also runs in one PostgreSQL transaction. A positive initial bala
 
 ## Pending decisions
 
-- Add the SQS inbox consumer.
+- Connect the inbox repository to the SQS transaction consumer.
 - Define the DLQ policy.
 
 ## Local persistence
@@ -65,3 +65,5 @@ Wallet creation also runs in one PostgreSQL transaction. A positive initial bala
 PostgreSQL runs through Docker Compose, with its port bound to `127.0.0.1`. NestJS uses MikroORM 7 with the PostgreSQL driver. Reversible migrations create `wallets`, `wallet_ledger_entries`, `wager_transactions`, and `integration_event_outbox`. Wallet balances, transaction amounts, ledger amounts, and balance snapshots use minor units as `BIGINT`; constraints protect wallet and transaction currencies, provider idempotency, transaction identity, ledger uniqueness, balanced entries, and single-use refunds and rollbacks. Integration tests validate the schema, repository round-trips, transaction rollback, and concurrent wallet movements against PostgreSQL.
 
 The outbox worker claims due events with PostgreSQL `FOR UPDATE SKIP LOCKED` and a time-limited lease, publishes outside the SQL transaction, and marks an event published only after SQS accepts the message. Failed sends return to the queue with capped exponential backoff. A crashed worker's lease expires so another process can reclaim the event. This is at-least-once delivery: a crash after SQS accepts a message but before PostgreSQL records publication can produce a duplicate, so consumers must deduplicate by event ID. Set `SQS_QUEUE_URL` to enable polling; `SQS_ENDPOINT_URL` points the AWS SDK at the local MiniStack emulator configured in Docker Compose.
+
+The `inbox_messages` table uses `(consumer_name, message_id)` as its primary key and stores a payload hash with receipt and processing timestamps. Repeated IDs with the same hash are identified as redeliveries; reusing an ID with a different hash is rejected. The persistence port is available through the wallet unit of work so the consumer can later commit inbox state alongside financial state, ledger entries, and outbox events.
