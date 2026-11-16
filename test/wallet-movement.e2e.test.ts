@@ -30,6 +30,10 @@ describe('wallet movement transactions', () => {
   afterAll(async () => {
     if (orm) {
       await orm.em.getConnection().execute(
+        'delete from "integration_event_outbox" where "aggregate_id" in (select "id" from "wager_transactions" where "player_id" like ?)',
+        [`${playerId}%`],
+      );
+      await orm.em.getConnection().execute(
         'delete from "wallet_ledger_entries" where "wallet_id" in (select "id" from "wallets" where "player_id" like ?)',
         [`${playerId}%`],
       );

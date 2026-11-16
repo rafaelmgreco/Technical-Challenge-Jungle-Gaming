@@ -39,6 +39,6 @@ bun test
 bun run test:e2e
 ```
 
-The current tests cover the application scaffold, the rules for `Money`, `Wallet`, `WagerTransaction`, and the ledger, both HTTP endpoints, atomic wallet opening, database constraints, repository persistence, idempotent retries and conflicts, referenced wins, pending-reference retries and exhaustion, single-use refunds and rollbacks, rollback insufficient-funds rejection, and concurrent wallet movements and refunds in PostgreSQL. Start the database with `bun run db:up` before running the tests.
+The current tests cover the application scaffold, the rules for `Money`, `Wallet`, `WagerTransaction`, and the ledger, both HTTP endpoints, atomic wallet opening, database constraints, repository persistence, idempotent retries and conflicts, referenced wins, pending-reference retries and exhaustion, pending and rejection outbox events, single-use refunds and rollbacks, rollback insufficient-funds rejection, and concurrent wallet movements and refunds in PostgreSQL. Start the database with `bun run db:up` before running the tests.
 
 The selected `WagerTransaction` state transitions are documented in [ARCHITECTURE.md](./ARCHITECTURE.md).

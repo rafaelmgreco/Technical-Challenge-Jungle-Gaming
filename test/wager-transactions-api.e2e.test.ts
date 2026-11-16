@@ -35,6 +35,10 @@ describe('WagerTransactionsController (e2e)', () => {
   afterEach(async () => {
     if (orm && wallet) {
       await orm.em.getConnection().execute(
+        'delete from "integration_event_outbox" where "aggregate_id" in (select "id" from "wager_transactions" where "wallet_id" = ?)',
+        [wallet.id],
+      );
+      await orm.em.getConnection().execute(
         'delete from "wallet_ledger_entries" where "wallet_id" = ?',
         [wallet.id],
       );
@@ -69,7 +73,6 @@ describe('WagerTransactionsController (e2e)', () => {
       balance: { amount: '75.00', currency: 'BRL' },
       idempotentReplay: false,
     });
-
     const retry = await request(app.getHttpServer())
       .post('/wagering/transactions')
       .set('Idempotency-Key', 'http-provider:http-bet-1')
@@ -203,6 +206,13 @@ describe('WagerTransactionsController (e2e)', () => {
       referenceExternalTransactionId: 'unknown-bet',
       idempotentReplay: false,
     });
+    const pendingEvent = await orm.em.getConnection().execute(
+      'select "event_type", "data" from "integration_event_outbox" where "aggregate_id" = ?',
+      [first.body.transactionId],
+    );
+    expect(pendingEvent).toHaveLength(1);
+    expect(pendingEvent[0].event_type).toBe('WagerTransactionPendingReference');
+    expect(pendingEvent[0].data.referenceExternalTransactionId).toBe('unknown-bet');
 
     const retry = await request(app.getHttpServer())
       .post('/wagering/transactions')
@@ -345,6 +355,15 @@ describe('WagerTransactionsController (e2e)', () => {
 
     const persisted = await new MikroOrmWalletRepository(orm.em.fork()).findById(wallet.id);
     expect(persisted?.balance.toJSON()).toEqual({ amount: '100.00', currency: 'BRL' });
+    const events = await orm.em.getConnection().execute(
+      'select "event_type", "data" from "integration_event_outbox" where "aggregate_id" = ? order by "occurred_at", "id"',
+      [pending.body.transactionId],
+    );
+    expect(events.map((event) => event.event_type)).toEqual([
+      'WagerTransactionPendingReference',
+      'WagerTransactionRejected',
+    ]);
+    expect(events[1].data.failureCode).toBe('REFERENCE_NOT_FOUND');
   });
 
   it('refunds a processed BET once, credits the same amount, and replays idempotently', async () => {
@@ -708,6 +727,13 @@ describe('WagerTransactionsController (e2e)', () => {
       failureCode: 'INSUFFICIENT_FUNDS',
       idempotentReplay: false,
     });
+    const rejectionEvent = await orm.em.getConnection().execute(
+      'select "event_type", "data" from "integration_event_outbox" where "aggregate_id" = ?',
+      [rejected.body.transactionId],
+    );
+    expect(rejectionEvent).toHaveLength(1);
+    expect(rejectionEvent[0].event_type).toBe('WagerTransactionRejected');
+    expect(rejectionEvent[0].data.failureCode).toBe('INSUFFICIENT_FUNDS');
 
     const retry = await request(app.getHttpServer())
       .post('/wagering/transactions')

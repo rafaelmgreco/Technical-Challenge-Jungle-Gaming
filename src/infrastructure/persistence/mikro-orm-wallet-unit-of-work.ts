@@ -4,6 +4,7 @@ import type { WalletRepositories, WalletUnitOfWork } from '../../application/por
 import { MikroOrmWalletRepository } from './mikro-orm-wallet.repository.js';
 import { MikroOrmWalletLedgerRepository } from './mikro-orm-wallet-ledger.repository.js';
 import { MikroOrmWagerTransactionRepository } from './mikro-orm-wager-transaction.repository.js';
+import { MikroOrmIntegrationEventOutboxRepository } from './mikro-orm-integration-event-outbox.repository.js';
 
 @Injectable()
 export class MikroOrmWalletUnitOfWork implements WalletUnitOfWork {
@@ -15,6 +16,7 @@ export class MikroOrmWalletUnitOfWork implements WalletUnitOfWork {
         wallets: new MikroOrmWalletRepository(transactionalEm),
         ledger: new MikroOrmWalletLedgerRepository(transactionalEm),
         transactions: new MikroOrmWagerTransactionRepository(transactionalEm),
+        outbox: new MikroOrmIntegrationEventOutboxRepository(transactionalEm),
       }),
     );
   }

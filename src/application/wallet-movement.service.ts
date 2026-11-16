@@ -6,10 +6,13 @@ import { Money } from '../domain/money/money.js';
 import {
   InvalidWagerTransactionError,
   InvalidWagerTransactionStateError,
+  WagerTransaction,
   WagerTransactionKind,
   WagerTransactionStatus,
 } from '../domain/wager-transaction/wager-transaction.js';
 import { WALLET_UNIT_OF_WORK, type WalletUnitOfWork } from './ports/wallet-unit-of-work.js';
+import type { IntegrationEventOutboxRepository } from './ports/integration-event-outbox.repository.js';
+import type { WagerTransactionRepository } from './ports/wager-transaction.repository.js';
 
 const MAX_REFERENCE_ATTEMPTS = 5;
 const REFERENCE_RETRY_BASE_DELAY_MS = 1_000;
@@ -21,6 +24,59 @@ function referenceRetryAt(at: Date, attemptCount: number): Date {
     REFERENCE_RETRY_BASE_DELAY_MS * 2 ** (attemptCount - 1),
   );
   return new Date(at.getTime() + delay);
+}
+
+async function persistRejection(
+  transactions: WagerTransactionRepository,
+  outbox: IntegrationEventOutboxRepository,
+  transaction: WagerTransaction,
+  failureCode: string,
+  occurredAt: Date,
+): Promise<{ failure: InvalidReferencedTransactionError }> {
+  transaction.reject(failureCode);
+  await transactions.save(transaction);
+  await outbox.save({
+    id: crypto.randomUUID(),
+    aggregateId: transaction.id,
+    eventType: 'WagerTransactionRejected',
+    version: 1,
+    correlationId: transaction.idempotencyKey,
+    causationId: transaction.id,
+    occurredAt,
+    data: {
+      transactionId: transaction.id,
+      providerId: transaction.providerId,
+      externalTransactionId: transaction.externalTransactionId,
+      walletId: transaction.walletId,
+      kind: transaction.kind,
+      failureCode,
+    },
+  });
+  return { failure: new InvalidReferencedTransactionError(transaction.id, failureCode) };
+}
+
+async function enqueuePendingReferenceEvent(
+  outbox: IntegrationEventOutboxRepository,
+  transaction: WagerTransaction,
+  occurredAt: Date,
+): Promise<void> {
+  await outbox.save({
+    id: crypto.randomUUID(),
+    aggregateId: transaction.id,
+    eventType: 'WagerTransactionPendingReference',
+    version: 1,
+    correlationId: transaction.idempotencyKey,
+    causationId: transaction.id,
+    occurredAt,
+    data: {
+      transactionId: transaction.id,
+      providerId: transaction.providerId,
+      externalTransactionId: transaction.externalTransactionId,
+      referenceExternalTransactionId: transaction.referenceExternalTransactionId,
+      walletId: transaction.walletId,
+      kind: transaction.kind,
+    },
+  });
 }
 
 export class WalletNotFoundError extends Error {
@@ -116,7 +172,7 @@ export class WalletMovementService {
     processedAt?: Date,
     onlyWhenReferenceRetryIsDue = false,
   ): Promise<WalletBalanceChange> {
-    const outcome = await this.unitOfWork.execute(async ({ wallets, ledger, transactions }) => {
+    const outcome = await this.unitOfWork.execute(async ({ wallets, ledger, transactions, outbox }) => {
       const transaction = await transactions.findByIdForUpdate(transactionId);
       if (!transaction) {
         throw new WagerTransactionNotFoundError(transactionId);
@@ -157,19 +213,17 @@ export class WalletMovementService {
       if (transaction.referenceExternalTransactionId && !reference) {
         if (transaction.status === WagerTransactionStatus.Pending) {
           transaction.markPendingReference(referenceRetryAt(at, 1));
+          await transactions.save(transaction);
+          await enqueuePendingReferenceEvent(outbox, transaction, at);
         } else {
           const attempts = transaction.recordReferenceRetry(
             referenceRetryAt(at, transaction.referenceAttemptCount + 1),
           );
           if (attempts >= MAX_REFERENCE_ATTEMPTS) {
-            transaction.reject('REFERENCE_NOT_FOUND');
-            await transactions.save(transaction);
-            return {
-              failure: new InvalidReferencedTransactionError(transaction.id, 'REFERENCE_NOT_FOUND'),
-            } as const;
+            return await persistRejection(transactions, outbox, transaction, 'REFERENCE_NOT_FOUND', at);
           }
+          await transactions.save(transaction);
         }
-        await transactions.save(transaction);
         return { pendingReference: new WagerTransactionPendingReferenceError(transaction.id) } as const;
       }
       if (reference) {
@@ -178,9 +232,7 @@ export class WalletMovementService {
           ? [WagerTransactionKind.Bet]
           : [WagerTransactionKind.Bet, WagerTransactionKind.Win, WagerTransactionKind.Refund];
         if (!allowedReferenceKinds.includes(reference.kind)) {
-          transaction.reject('INVALID_REFERENCE');
-          await transactions.save(transaction);
-          return { failure: new InvalidReferencedTransactionError(transaction.id) } as const;
+          return await persistRejection(transactions, outbox, transaction, 'INVALID_REFERENCE', at);
         }
         if (
           reference.status === WagerTransactionStatus.Pending ||
@@ -188,25 +240,21 @@ export class WalletMovementService {
         ) {
           if (transaction.status === WagerTransactionStatus.Pending) {
             transaction.markPendingReference(referenceRetryAt(at, 1));
+            await transactions.save(transaction);
+            await enqueuePendingReferenceEvent(outbox, transaction, at);
           } else {
             const attempts = transaction.recordReferenceRetry(
               referenceRetryAt(at, transaction.referenceAttemptCount + 1),
             );
             if (attempts >= MAX_REFERENCE_ATTEMPTS) {
-              transaction.reject('REFERENCE_NOT_FOUND');
-              await transactions.save(transaction);
-              return {
-                failure: new InvalidReferencedTransactionError(transaction.id, 'REFERENCE_NOT_FOUND'),
-              } as const;
+              return await persistRejection(transactions, outbox, transaction, 'REFERENCE_NOT_FOUND', at);
             }
+            await transactions.save(transaction);
           }
-          await transactions.save(transaction);
           return { pendingReference: new WagerTransactionPendingReferenceError(transaction.id) } as const;
         }
         if (reference.status !== WagerTransactionStatus.Processed) {
-          transaction.reject('INVALID_REFERENCE');
-          await transactions.save(transaction);
-          return { failure: new InvalidReferencedTransactionError(transaction.id) } as const;
+          return await persistRejection(transactions, outbox, transaction, 'INVALID_REFERENCE', at);
         }
       }
       let direction: LedgerDirection | undefined;
@@ -216,9 +264,7 @@ export class WalletMovementService {
         if (!(error instanceof InvalidWagerTransactionError) || !transaction.referenceExternalTransactionId) {
           throw error;
         }
-        transaction.reject('INVALID_REFERENCE');
-        await transactions.save(transaction);
-        return { failure: new InvalidReferencedTransactionError(transaction.id) } as const;
+        return await persistRejection(transactions, outbox, transaction, 'INVALID_REFERENCE', at);
       }
       if (direction === undefined) {
         throw new InvalidWagerTransactionError(`Transaction kind ${transaction.kind} has no ledger direction`);
@@ -246,14 +292,13 @@ export class WalletMovementService {
           transaction.kind,
         );
         if (existingReversal) {
-          transaction.reject('REFERENCE_ALREADY_REVERSED');
-          await transactions.save(transaction);
-          return {
-            failure: new InvalidReferencedTransactionError(
-              transaction.id,
-              'REFERENCE_ALREADY_REVERSED',
-            ),
-          } as const;
+          return await persistRejection(
+            transactions,
+            outbox,
+            transaction,
+            'REFERENCE_ALREADY_REVERSED',
+            at,
+          );
         }
       }
 
@@ -273,6 +318,23 @@ export class WalletMovementService {
           : 'INSUFFICIENT_FUNDS';
         transaction.reject(failureCode);
         await transactions.save(transaction);
+        await outbox.save({
+          id: crypto.randomUUID(),
+          aggregateId: transaction.id,
+          eventType: 'WagerTransactionRejected',
+          version: 1,
+          correlationId: transaction.idempotencyKey,
+          causationId: transaction.id,
+          occurredAt: at,
+          data: {
+            transactionId: transaction.id,
+            providerId: transaction.providerId,
+            externalTransactionId: transaction.externalTransactionId,
+            walletId: transaction.walletId,
+            kind: transaction.kind,
+            failureCode,
+          },
+        });
         return { failure: new InsufficientWalletFundsError(failureCode) } as const;
       }
 
