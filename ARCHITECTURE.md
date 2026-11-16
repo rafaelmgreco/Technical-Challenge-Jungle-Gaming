@@ -26,6 +26,12 @@ Wager transactions are persisted with their provider identity, idempotency key, 
 
 Registration treats a retry with the same provider, idempotency key, and payload hash as the original transaction and returns that stored transaction. Reusing the key with a different payload, or reusing the provider's external transaction ID with a different key, is a conflict. Concurrent identical registrations converge on one database row.
 
+## HTTP provider endpoint
+
+`POST /wagering/transactions` requires the `Idempotency-Key` header. The payload hash is SHA-256 over canonical JSON of the business fields (`providerId`, `externalTransactionId`, `playerId`, `walletId`, `roundId`, `gameId`, `kind`, and normalized `money`), with object keys sorted recursively; the header is excluded. The current endpoint processes unreferenced `BET` and `WIN` requests only. It returns `201` for a new processed transaction, `200` for a processed replay, `409` for an idempotency or external-ID conflict, and `422` for a business rejection or unsupported operation.
+
+Authentication is not implemented in this local challenge prototype. Before external exposure, the controller should use a `ProviderIdentityPort` backed by an external OIDC identity provider; health endpoints can remain public.
+
 ## Ledger
 
 Each `WalletLedgerEntry` is immutable and records the wallet, transaction, direction, amount, previous balance, resulting balance, and creation time. The `create` factory requires matching currencies, a positive amount, non-negative balances, and validates that `previous balance ± amount = resulting balance`. PostgreSQL enforces one entry per wallet and transaction, validates the balance arithmetic, and ensures the ledger currency matches the wallet.
@@ -47,6 +53,7 @@ Wallet debits and credits run through a unit of work backed by a PostgreSQL tran
 
 ## Pending decisions
 
+- Process `LOSS`, referenced `WIN`, `REFUND`, and `ROLLBACK` operations, including out-of-order references.
 - Define the local SQS emulator and retry and DLQ policies.
 
 ## Local persistence

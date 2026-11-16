@@ -28,6 +28,8 @@ bun run start:dev
 
 The application responds at `http://localhost:3000/`.
 
+The provider endpoint is `POST /wagering/transactions` and requires an `Idempotency-Key` header. The first HTTP version processes unreferenced `BET` and `WIN` requests. Reference-based operations and `LOSS` are not enabled yet.
+
 The local PostgreSQL instance uses port `5432`. The default credentials are for local development only; update `.env` if needed.
 
 ## Tests
@@ -37,6 +39,6 @@ bun test
 bun run test:e2e
 ```
 
-The current tests cover the application scaffold, the rules for `Money`, `Wallet`, `WagerTransaction`, and the ledger, the initial endpoint, database constraints, repository persistence, idempotent retries and conflicts, atomic rollback, insufficient-funds rejection, and concurrent wallet movements in PostgreSQL. Start the database with `bun run db:up` before running the tests.
+The current tests cover the application scaffold, the rules for `Money`, `Wallet`, `WagerTransaction`, and the ledger, the provider endpoint, database constraints, repository persistence, idempotent retries and conflicts, atomic rollback, insufficient-funds rejection, and concurrent wallet movements in PostgreSQL. Start the database with `bun run db:up` before running the tests.
 
 The selected `WagerTransaction` state transitions are documented in [ARCHITECTURE.md](./ARCHITECTURE.md).

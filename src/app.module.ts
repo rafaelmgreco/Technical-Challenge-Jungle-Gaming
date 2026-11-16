@@ -6,6 +6,7 @@ import mikroOrmConfig from './infrastructure/database/mikro-orm.config.js';
 import { WALLET_UNIT_OF_WORK } from './application/ports/wallet-unit-of-work.js';
 import { WalletMovementService } from './application/wallet-movement.service.js';
 import { RegisterWagerTransactionService } from './application/register-wager-transaction.service.js';
+import { WagerTransactionsController } from './wagering/wager-transactions.controller.js';
 import { MikroOrmWalletUnitOfWork } from './infrastructure/persistence/mikro-orm-wallet-unit-of-work.js';
 
 @Module({
@@ -15,7 +16,7 @@ import { MikroOrmWalletUnitOfWork } from './infrastructure/persistence/mikro-orm
       autoLoadEntities: true,
     }),
   ],
-  controllers: [AppController],
+  controllers: [AppController, WagerTransactionsController],
   providers: [
     AppService,
     WalletMovementService,
