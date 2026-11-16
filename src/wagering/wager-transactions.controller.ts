@@ -29,6 +29,7 @@ import {
   InvalidReferencedTransactionError,
   WalletMovementService,
   WalletNotFoundError,
+  WagerTransactionPendingReferenceError,
 } from '../application/wallet-movement.service.js';
 import { WALLET_UNIT_OF_WORK, type WalletUnitOfWork } from '../application/ports/wallet-unit-of-work.js';
 
@@ -188,7 +189,10 @@ export class WagerTransactionsController {
     }
 
     const transaction = registrationResult.transaction;
-    if (transaction.status === WagerTransactionStatus.Pending) {
+    if (
+      transaction.status === WagerTransactionStatus.Pending ||
+      transaction.status === WagerTransactionStatus.PendingReference
+    ) {
       try {
         if (transaction.kind === WagerTransactionKind.Loss) {
           await this.movements.processLoss(transaction.id);
@@ -206,6 +210,15 @@ export class WagerTransactionsController {
             transactionId: transaction.id,
             status: WagerTransactionStatus.Rejected,
             failureCode: error.failureCode,
+            idempotentReplay: registrationResult.replayed,
+          };
+        }
+        if (error instanceof WagerTransactionPendingReferenceError) {
+          response.status(HttpStatus.ACCEPTED);
+          return {
+            transactionId: transaction.id,
+            status: WagerTransactionStatus.PendingReference,
+            referenceExternalTransactionId: transaction.referenceExternalTransactionId,
             idempotentReplay: registrationResult.replayed,
           };
         }

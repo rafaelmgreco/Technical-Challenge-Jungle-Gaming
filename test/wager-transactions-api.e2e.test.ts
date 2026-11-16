@@ -178,7 +178,7 @@ describe('WagerTransactionsController (e2e)', () => {
     expect(bet.body.status).toBe('PROCESSED');
   });
 
-  it('rejects an unavailable WIN reference and returns the same rejection on retry', async () => {
+  it('stores an unavailable WIN reference as pending and returns the same pending result on retry', async () => {
     const body = {
       providerId: 'http-provider',
       externalTransactionId: 'reference-win-missing',
@@ -196,18 +196,56 @@ describe('WagerTransactionsController (e2e)', () => {
       .post('/wagering/transactions')
       .set('Idempotency-Key', key)
       .send(body)
-      .expect(422);
-    expect(first.body).toMatchObject({ status: 'REJECTED', failureCode: 'INVALID_REFERENCE' });
+      .expect(202);
+    expect(first.body).toMatchObject({
+      status: 'PENDING_REFERENCE',
+      referenceExternalTransactionId: 'unknown-bet',
+      idempotentReplay: false,
+    });
 
     const retry = await request(app.getHttpServer())
       .post('/wagering/transactions')
       .set('Idempotency-Key', key)
       .send(body)
-      .expect(422);
+      .expect(202);
     expect(retry.body).toMatchObject({
       transactionId: first.body.transactionId,
-      status: 'REJECTED',
-      failureCode: 'INVALID_REFERENCE',
+      status: 'PENDING_REFERENCE',
+      referenceExternalTransactionId: 'unknown-bet',
+      idempotentReplay: true,
+    });
+    const persisted = await new MikroOrmWalletRepository(orm.em.fork()).findById(wallet.id);
+    expect(persisted?.balance.toJSON()).toEqual({ amount: '100.00', currency: 'BRL' });
+    const pendingLedger = await orm.em.getConnection().execute(
+      'select count(*)::int as count from "wallet_ledger_entries" where "transaction_id" = ?',
+      [first.body.transactionId],
+    );
+    expect(pendingLedger[0].count).toBe(0);
+
+    await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', 'http-provider:unknown-bet')
+      .send({
+        providerId: 'http-provider',
+        externalTransactionId: 'unknown-bet',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        roundId: 'missing-reference-round',
+        gameId: 'missing-reference-game',
+        kind: 'BET',
+        money: { amount: '25.00', currency: 'BRL' },
+      })
+      .expect(201);
+
+    const resolved = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', key)
+      .send(body)
+      .expect(200);
+    expect(resolved.body).toMatchObject({
+      transactionId: first.body.transactionId,
+      status: 'PROCESSED',
+      balance: { amount: '80.00', currency: 'BRL' },
       idempotentReplay: true,
     });
   });

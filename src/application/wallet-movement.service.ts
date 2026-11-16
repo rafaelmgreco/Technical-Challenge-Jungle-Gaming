@@ -32,6 +32,13 @@ export class InvalidReferencedTransactionError extends Error {
   }
 }
 
+export class WagerTransactionPendingReferenceError extends Error {
+  constructor(transactionId: string) {
+    super(`Wager transaction ${transactionId} is waiting for its reference`);
+    this.name = 'WagerTransactionPendingReferenceError';
+  }
+}
+
 @Injectable()
 export class WalletMovementService {
   constructor(@Inject(WALLET_UNIT_OF_WORK) private readonly unitOfWork: WalletUnitOfWork) {}
@@ -88,7 +95,10 @@ export class WalletMovementService {
       if (!transaction) {
         throw new WagerTransactionNotFoundError(transactionId);
       }
-      if (transaction.status !== WagerTransactionStatus.Pending) {
+      if (
+        transaction.status !== WagerTransactionStatus.Pending &&
+        transaction.status !== WagerTransactionStatus.PendingReference
+      ) {
         throw new InvalidWagerTransactionStateError(transaction.status);
       }
       const expectedKindIsSupported = expectedDirection === undefined
@@ -108,6 +118,39 @@ export class WalletMovementService {
             transaction.referenceExternalTransactionId,
           )
         : undefined;
+      if (transaction.referenceExternalTransactionId && !reference) {
+        if (transaction.status === WagerTransactionStatus.Pending) {
+          transaction.markPendingReference();
+          await transactions.save(transaction);
+        }
+        return { pendingReference: new WagerTransactionPendingReferenceError(transaction.id) } as const;
+      }
+      if (reference) {
+        const allowedReferenceKinds = transaction.kind === WagerTransactionKind.Win ||
+          transaction.kind === WagerTransactionKind.Refund
+          ? [WagerTransactionKind.Bet]
+          : [WagerTransactionKind.Bet, WagerTransactionKind.Win, WagerTransactionKind.Refund];
+        if (!allowedReferenceKinds.includes(reference.kind)) {
+          transaction.reject('INVALID_REFERENCE');
+          await transactions.save(transaction);
+          return { failure: new InvalidReferencedTransactionError(transaction.id) } as const;
+        }
+        if (
+          reference.status === WagerTransactionStatus.Pending ||
+          reference.status === WagerTransactionStatus.PendingReference
+        ) {
+          if (transaction.status === WagerTransactionStatus.Pending) {
+            transaction.markPendingReference();
+            await transactions.save(transaction);
+          }
+          return { pendingReference: new WagerTransactionPendingReferenceError(transaction.id) } as const;
+        }
+        if (reference.status !== WagerTransactionStatus.Processed) {
+          transaction.reject('INVALID_REFERENCE');
+          await transactions.save(transaction);
+          return { failure: new InvalidReferencedTransactionError(transaction.id) } as const;
+        }
+      }
       let direction: LedgerDirection | undefined;
       try {
         direction = transaction.ledgerDirectionFor(reference ?? undefined);
@@ -194,6 +237,9 @@ export class WalletMovementService {
       return { change } as const;
     });
 
+    if ('pendingReference' in outcome) {
+      throw outcome.pendingReference;
+    }
     if ('failure' in outcome) {
       throw outcome.failure;
     }
