@@ -19,9 +19,13 @@
     "test:watch": "bun test --watch",
     "test:cov": "bun test --coverage",
     "test:e2e": "bun test ./test",
+    "test:sqs": "bun test test/sqs-integration-event-publisher.e2e.test.ts",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
     "db:logs": "docker compose logs -f postgres",
+    "sqs:up": "docker compose up -d ministack",
+    "sqs:down": "docker compose stop ministack",
+    "sqs:logs": "docker compose logs -f ministack",
     "db:migrate": "bun src/infrastructure/database/migrate.ts"
   },
   "dependencies": {

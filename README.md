@@ -23,6 +23,7 @@ bun install
 Copy-Item .env.example .env
 bun run db:up
 bun run db:migrate
+bun run sqs:up
 bun run start:dev
 ```
 
@@ -37,10 +38,12 @@ The local PostgreSQL instance uses port `5432`. The default credentials are for 
 ```bash
 bun test
 bun run test:e2e
+bun run sqs:up
+bun run test:sqs
 ```
 
 The current tests cover the application scaffold, the rules for `Money`, `Wallet`, `WagerTransaction`, and the ledger, both HTTP endpoints, atomic wallet opening, database constraints, repository persistence, idempotent retries and conflicts, referenced wins, pending-reference retries and exhaustion, pending and rejection outbox events, concurrent outbox claims and retry scheduling, single-use refunds and rollbacks, rollback insufficient-funds rejection, and concurrent wallet movements and refunds in PostgreSQL. Start the database with `bun run db:up` before running the tests.
 
-The outbox publisher sends pending integration events to SQS. Set `SQS_QUEUE_URL` in the environment to activate its background worker. For an SQS-compatible local endpoint, set `SQS_ENDPOINT_URL`; the local emulator and queue setup are the next infrastructure step.
+The outbox publisher sends pending integration events to SQS. `bun run sqs:up` starts MiniStack and creates the `jungle-integration-events` queue. The example `.env` points the publisher to that local queue; the worker activates when `SQS_QUEUE_URL` is configured. Use `bun run sqs:logs` to inspect the emulator and `bun run sqs:down` to stop it.
 
 The selected `WagerTransaction` state transitions are documented in [ARCHITECTURE.md](./ARCHITECTURE.md).

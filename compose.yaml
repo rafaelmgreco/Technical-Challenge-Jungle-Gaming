@@ -1,4 +1,19 @@
 services:
+  ministack:
+    image: ministackorg/ministack:1.5.41
+    environment:
+      MINISTACK_REGION: ${AWS_REGION:-us-east-1}
+    ports:
+      - "127.0.0.1:${SQS_PORT:-4566}:4566"
+    volumes:
+      - ./docker/ministack/ready.d:/docker-entrypoint-initaws.d/ready.d:ro
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4566/_ministack/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   postgres:
     image: postgres:17-alpine
     environment:
