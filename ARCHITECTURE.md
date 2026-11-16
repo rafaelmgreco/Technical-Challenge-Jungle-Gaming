@@ -24,6 +24,8 @@ Failure codes are stable, uppercase, machine-readable strings, for example `INSU
 
 Wager transactions are persisted with their provider identity, idempotency key, payload hash, wallet, amount, status, and processing result. PostgreSQL enforces unique idempotency keys and external transaction IDs per provider. The current movement service processes unreferenced `BET` debits and `WIN` credits; reference-based operations are still pending.
 
+Registration treats a retry with the same provider, idempotency key, and payload hash as the original transaction and returns that stored transaction. Reusing the key with a different payload, or reusing the provider's external transaction ID with a different key, is a conflict. Concurrent identical registrations converge on one database row.
+
 ## Ledger
 
 Each `WalletLedgerEntry` is immutable and records the wallet, transaction, direction, amount, previous balance, resulting balance, and creation time. The `create` factory requires matching currencies, a positive amount, non-negative balances, and validates that `previous balance ± amount = resulting balance`. PostgreSQL enforces one entry per wallet and transaction, validates the balance arithmetic, and ensures the ledger currency matches the wallet.

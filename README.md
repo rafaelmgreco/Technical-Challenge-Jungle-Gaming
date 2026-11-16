@@ -14,7 +14,7 @@ Project for the [Jungle Gaming backend challenge](https://github.com/junglegamin
 
 ## Current status
 
-The repository is in its early stages. It contains a minimal NestJS application, the `Money` value object, the `Wallet` aggregate, persisted wager transactions, immutable ledger entries, PostgreSQL migrations, MikroORM repositories, and atomic `BET`/`WIN` wallet processing with a pessimistic row lock. Reference-based operations and messaging will be implemented in later steps.
+The repository is in its early stages. It contains a minimal NestJS application, the `Money` value object, the `Wallet` aggregate, persisted wager transactions with idempotent registration, immutable ledger entries, PostgreSQL migrations, MikroORM repositories, and atomic `BET`/`WIN` wallet processing with a pessimistic row lock. Reference-based operations and messaging will be implemented in later steps.
 
 ## Getting started
 
@@ -37,6 +37,6 @@ bun test
 bun run test:e2e
 ```
 
-The current tests cover the application scaffold, the rules for `Money`, `Wallet`, `WagerTransaction`, and the ledger, the initial endpoint, database constraints, repository persistence, atomic rollback, insufficient-funds rejection, and concurrent wallet movements in PostgreSQL. Start the database with `bun run db:up` before running the tests.
+The current tests cover the application scaffold, the rules for `Money`, `Wallet`, `WagerTransaction`, and the ledger, the initial endpoint, database constraints, repository persistence, idempotent retries and conflicts, atomic rollback, insufficient-funds rejection, and concurrent wallet movements in PostgreSQL. Start the database with `bun run db:up` before running the tests.
 
 The selected `WagerTransaction` state transitions are documented in [ARCHITECTURE.md](./ARCHITECTURE.md).
