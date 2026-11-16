@@ -112,6 +112,52 @@ describe('WagerTransactionsController (e2e)', () => {
     expect(persisted?.balance.toJSON()).toEqual({ amount: '75.00', currency: 'BRL' });
   });
 
+  it('retrieves a wager transaction by internal ID and provider transaction ID', async () => {
+    const submitted = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', 'http-provider:lookup-transaction')
+      .send({
+        providerId: 'http-provider',
+        externalTransactionId: 'lookup-transaction',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        roundId: 'lookup-round',
+        gameId: 'lookup-game',
+        kind: 'BET',
+        money: { amount: '12.00', currency: 'BRL' },
+      })
+      .expect(201);
+
+    const byId = await request(app.getHttpServer())
+      .get(`/wagering/transactions/${submitted.body.transactionId}`)
+      .expect(200);
+    const byProviderExternalId = await request(app.getHttpServer())
+      .get('/providers/http-provider/wagering/transactions/lookup-transaction')
+      .expect(200);
+
+    expect(byId.body).toEqual(byProviderExternalId.body);
+    expect(byId.body).toMatchObject({
+      transactionId: submitted.body.transactionId,
+      providerId: 'http-provider',
+      externalTransactionId: 'lookup-transaction',
+      status: 'PROCESSED',
+      money: { amount: '12.00', currency: 'BRL' },
+      balance: { amount: '88.00', currency: 'BRL' },
+    });
+  });
+
+  it('returns not found for unknown transaction lookup keys', async () => {
+    const byId = await request(app.getHttpServer())
+      .get(`/wagering/transactions/${crypto.randomUUID()}`)
+      .expect(404);
+    expect(byId.body.code).toBe('WAGER_TRANSACTION_NOT_FOUND');
+
+    const byProviderExternalId = await request(app.getHttpServer())
+      .get('/providers/http-provider/wagering/transactions/unknown-transaction')
+      .expect(404);
+    expect(byProviderExternalId.body.code).toBe('WAGER_TRANSACTION_NOT_FOUND');
+  });
+
   it('submits a WIN and credits the wallet', async () => {
     const response = await request(app.getHttpServer())
       .post('/wagering/transactions')

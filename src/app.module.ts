@@ -19,6 +19,8 @@ import { SqsWagerTransactionConsumer } from './infrastructure/messaging/sqs-wage
 import { ReconcileWalletService } from './application/reconcile-wallet.service.js';
 import { GetWalletService } from './application/get-wallet.service.js';
 import { GetWalletLedgerPageService } from './application/get-wallet-ledger-page.service.js';
+import { GetWagerTransactionService } from './application/get-wager-transaction.service.js';
+import { ProviderWagerTransactionsController } from './wagering/provider-wager-transactions.controller.js';
 
 @Module({
   imports: [
@@ -27,7 +29,7 @@ import { GetWalletLedgerPageService } from './application/get-wallet-ledger-page
       autoLoadEntities: true,
     }),
   ],
-  controllers: [AppController, WagerTransactionsController, WalletsController],
+  controllers: [AppController, WagerTransactionsController, ProviderWagerTransactionsController, WalletsController],
   providers: [
     AppService,
     WalletMovementService,
@@ -45,6 +47,7 @@ import { GetWalletLedgerPageService } from './application/get-wallet-ledger-page
     ReconcileWalletService,
     GetWalletService,
     GetWalletLedgerPageService,
+    GetWagerTransactionService,
     MikroOrmWalletUnitOfWork,
     { provide: WALLET_UNIT_OF_WORK, useExisting: MikroOrmWalletUnitOfWork },
   ],

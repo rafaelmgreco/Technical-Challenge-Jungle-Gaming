@@ -6,6 +6,8 @@ import {
   HttpStatus,
   InternalServerErrorException,
   NotFoundException,
+  Get,
+  Param,
   Post,
   Res,
   Body,
@@ -22,10 +24,37 @@ import {
   type SubmitWagerTransactionResult,
 } from '../application/submit-wager-transaction.service.js';
 import { parseWagerTransactionBody } from './parse-wager-transaction-body.js';
+import {
+  GetWagerTransactionService,
+  WagerTransactionNotFoundError,
+} from '../application/get-wager-transaction.service.js';
+import { toWagerTransactionResponse } from './wager-transaction-response.js';
 
 @Controller('wagering/transactions')
 export class WagerTransactionsController {
-  constructor(private readonly submissions: SubmitWagerTransactionService) {}
+  constructor(
+    private readonly submissions: SubmitWagerTransactionService,
+    private readonly getTransactions: GetWagerTransactionService,
+  ) {}
+
+  @Get(':transactionId')
+  async getById(
+    @Param('transactionId') transactionId: string,
+  ): Promise<Record<string, unknown>> {
+    try {
+      return toWagerTransactionResponse(
+        await this.getTransactions.byId(transactionId),
+      );
+    } catch (error) {
+      if (error instanceof WagerTransactionNotFoundError) {
+        throw new NotFoundException({
+          code: 'WAGER_TRANSACTION_NOT_FOUND',
+          message: error.message,
+        });
+      }
+      throw error;
+    }
+  }
 
   @Post()
   async submit(
