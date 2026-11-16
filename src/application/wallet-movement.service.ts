@@ -79,6 +79,55 @@ async function markInboxProcessed(
   }
 }
 
+async function enqueueProcessedEvents(
+  outbox: IntegrationEventOutboxRepository,
+  transaction: WagerTransaction,
+  occurredAt: Date,
+  balance: Money,
+  change?: WalletBalanceChange,
+): Promise<void> {
+  await outbox.save({
+    id: crypto.randomUUID(),
+    aggregateId: transaction.id,
+    eventType: 'WagerTransactionProcessed',
+    version: 1,
+    correlationId: transaction.idempotencyKey,
+    causationId: transaction.id,
+    occurredAt,
+    data: {
+      transactionId: transaction.id,
+      providerId: transaction.providerId,
+      externalTransactionId: transaction.externalTransactionId,
+      walletId: transaction.walletId,
+      kind: transaction.kind,
+      money: transaction.money.toJSON(),
+      referenceTransactionId: transaction.referenceTransactionId,
+      balance: balance.toJSON(),
+    },
+  });
+
+  if (change) {
+    await outbox.save({
+      id: crypto.randomUUID(),
+      aggregateId: transaction.id,
+      eventType: 'WalletBalanceChanged',
+      version: 1,
+      correlationId: transaction.idempotencyKey,
+      causationId: transaction.id,
+      occurredAt,
+      data: {
+        walletId: transaction.walletId,
+        transactionId: transaction.id,
+        direction: change.direction,
+        money: change.money.toJSON(),
+        balanceBefore: change.balanceBefore.toJSON(),
+        balanceAfter: change.balanceAfter.toJSON(),
+        walletVersion: change.walletVersion,
+      },
+    });
+  }
+}
+
 async function enqueuePendingReferenceEvent(
   outbox: IntegrationEventOutboxRepository,
   transaction: WagerTransaction,
@@ -192,7 +241,7 @@ export class WalletMovementService {
     processedAt?: Date,
     inboxMessage?: Omit<InboxMessageRecord, 'processedAt'>,
   ): Promise<Money> {
-    return this.unitOfWork.execute(async ({ wallets, transactions, inbox }) => {
+    return this.unitOfWork.execute(async ({ wallets, transactions, outbox, inbox }) => {
       const transaction = await transactions.findByIdForUpdate(transactionId);
       if (!transaction) {
         throw new WagerTransactionNotFoundError(transactionId);
@@ -221,12 +270,10 @@ export class WalletMovementService {
         );
       }
 
-      transaction.markProcessed(
-        undefined,
-        processedAt ?? new Date(),
-        wallet.balance,
-      );
+      const at = processedAt ?? new Date();
+      transaction.markProcessed(undefined, at, wallet.balance);
       await transactions.save(transaction);
+      await enqueueProcessedEvents(outbox, transaction, at, wallet.balance);
       await markInboxProcessed(inbox, inboxMessage);
       return wallet.balance;
     });
@@ -500,6 +547,13 @@ export class WalletMovementService {
         await wallets.save(wallet);
         await ledger.save(entry);
         await transactions.save(transaction);
+        await enqueueProcessedEvents(
+          outbox,
+          transaction,
+          at,
+          change.balanceAfter,
+          change,
+        );
         await markInboxProcessed(inbox, inboxMessage);
         return { change } as const;
       },

@@ -1,7 +1,11 @@
 export interface IntegrationEventRecord {
   id: string;
   aggregateId: string;
-  eventType: 'WagerTransactionPendingReference' | 'WagerTransactionRejected';
+  eventType:
+    | 'WagerTransactionPendingReference'
+    | 'WagerTransactionRejected'
+    | 'WagerTransactionProcessed'
+    | 'WalletBalanceChanged';
   version: 1;
   correlationId: string;
   causationId?: string;

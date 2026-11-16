@@ -26,6 +26,10 @@ describe('WalletsController (e2e)', () => {
   afterEach(async () => {
     if (orm && playerId) {
       await orm.em.getConnection().execute(
+        'delete from "integration_event_outbox" where "aggregate_id" in (select "id" from "wager_transactions" where "player_id" = ?)',
+        [playerId],
+      );
+      await orm.em.getConnection().execute(
         'delete from "wallet_ledger_entries" where "wallet_id" in (select "id" from "wallets" where "player_id" = ?)',
         [playerId],
       );
@@ -75,6 +79,14 @@ describe('WalletsController (e2e)', () => {
       [response.body.id],
     );
     expect(linkedEntry[0]?.transaction_id).toBe(transactionId[0]?.id);
+    const events = await orm.em.getConnection().execute(
+      'select "event_type", "data" from "integration_event_outbox" where "aggregate_id" = ?',
+      [transactionId[0]?.id],
+    );
+    expect(events.map((event: { event_type: string }) => event.event_type).sort()).toEqual([
+      'WagerTransactionProcessed',
+      'WalletBalanceChanged',
+    ]);
   });
 
   it('creates a zero-balance wallet without an OPENING transaction or ledger entry', async () => {
@@ -84,13 +96,14 @@ describe('WalletsController (e2e)', () => {
       .expect(201);
 
     expect(response.body.balance).toEqual({ amount: '0.00', currency: 'BRL' });
-    const rows = await orm.em.getConnection().execute<{ transactions: string; entries: string }[]>(
+    const rows = await orm.em.getConnection().execute<{ transactions: string; entries: string; events: string }[]>(
       `select
          (select count(*)::text from "wager_transactions" where "wallet_id" = ?) as transactions,
-         (select count(*)::text from "wallet_ledger_entries" where "wallet_id" = ?) as entries`,
-      [response.body.id, response.body.id],
+         (select count(*)::text from "wallet_ledger_entries" where "wallet_id" = ?) as entries,
+         (select count(*)::text from "integration_event_outbox" where "aggregate_id" in (select "id" from "wager_transactions" where "wallet_id" = ?)) as events`,
+      [response.body.id, response.body.id, response.body.id],
     );
-    expect(rows[0]).toEqual({ transactions: '0', entries: '0' });
+    expect(rows[0]).toEqual({ transactions: '0', entries: '0', events: '0' });
   });
 
   it('allows one wallet per currency and reports a duplicate as a conflict', async () => {

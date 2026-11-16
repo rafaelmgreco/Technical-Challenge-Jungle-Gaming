@@ -5,6 +5,52 @@ import { Money } from '../domain/money/money.js';
 import { Wallet } from '../domain/wallet/wallet.js';
 import { WagerTransaction, WagerTransactionKind } from '../domain/wager-transaction/wager-transaction.js';
 import { WALLET_UNIT_OF_WORK, type WalletUnitOfWork } from './ports/wallet-unit-of-work.js';
+import type { IntegrationEventOutboxRepository } from './ports/integration-event-outbox.repository.js';
+
+async function enqueueWalletOpeningEvents(
+  outbox: IntegrationEventOutboxRepository,
+  transaction: WagerTransaction,
+  wallet: Wallet,
+  initialBalance: Money,
+  openedAt: Date,
+): Promise<void> {
+  await outbox.save({
+    id: crypto.randomUUID(),
+    aggregateId: transaction.id,
+    eventType: 'WagerTransactionProcessed',
+    version: 1,
+    correlationId: transaction.idempotencyKey,
+    causationId: transaction.id,
+    occurredAt: openedAt,
+    data: {
+      transactionId: transaction.id,
+      providerId: transaction.providerId,
+      externalTransactionId: transaction.externalTransactionId,
+      walletId: wallet.id,
+      kind: transaction.kind,
+      money: initialBalance.toJSON(),
+      balance: initialBalance.toJSON(),
+    },
+  });
+  await outbox.save({
+    id: crypto.randomUUID(),
+    aggregateId: transaction.id,
+    eventType: 'WalletBalanceChanged',
+    version: 1,
+    correlationId: transaction.idempotencyKey,
+    causationId: transaction.id,
+    occurredAt: openedAt,
+    data: {
+      walletId: wallet.id,
+      transactionId: transaction.id,
+      direction: LedgerDirection.Credit,
+      money: initialBalance.toJSON(),
+      balanceBefore: Money.zero(initialBalance.currency).toJSON(),
+      balanceAfter: initialBalance.toJSON(),
+      walletVersion: wallet.version,
+    },
+  });
+}
 
 export class WalletAlreadyExistsError extends Error {
   constructor(playerId: string, currency: string) {
@@ -27,7 +73,7 @@ export class CreateWalletService {
     });
 
     try {
-      return await this.unitOfWork.execute(async ({ wallets, ledger, transactions }) => {
+      return await this.unitOfWork.execute(async ({ wallets, ledger, transactions, outbox }) => {
         const existing = await wallets.findByPlayerAndCurrency(playerId, initialBalance.currency);
         if (existing) {
           throw new WalletAlreadyExistsError(playerId, initialBalance.currency);
@@ -66,6 +112,13 @@ export class CreateWalletService {
 
           await transactions.save(transaction);
           await ledger.save(entry);
+          await enqueueWalletOpeningEvents(
+            outbox,
+            transaction,
+            wallet,
+            initialBalance,
+            openedAt,
+          );
         }
 
         return wallet;

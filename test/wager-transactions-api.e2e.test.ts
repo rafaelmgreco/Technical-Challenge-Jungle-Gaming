@@ -73,6 +73,19 @@ describe('WagerTransactionsController (e2e)', () => {
       balance: { amount: '75.00', currency: 'BRL' },
       idempotentReplay: false,
     });
+    const events = await orm.em.getConnection().execute(
+      'select "event_type", "data" from "integration_event_outbox" where "aggregate_id" = ? order by "event_type"',
+      [first.body.transactionId],
+    );
+    expect(events.map((event: { event_type: string }) => event.event_type)).toEqual([
+      'WagerTransactionProcessed',
+      'WalletBalanceChanged',
+    ]);
+    expect(events.find((event: { event_type: string }) => event.event_type === 'WalletBalanceChanged')?.data).toMatchObject({
+      balanceBefore: { amount: '100.00', currency: 'BRL' },
+      balanceAfter: { amount: '75.00', currency: 'BRL' },
+      walletVersion: 2,
+    });
     const retry = await request(app.getHttpServer())
       .post('/wagering/transactions')
       .set('Idempotency-Key', 'http-provider:http-bet-1')
@@ -679,6 +692,13 @@ describe('WagerTransactionsController (e2e)', () => {
       [first.body.transactionId],
     );
     expect(lossLedger[0].count).toBe(0);
+    const lossEvents = await orm.em.getConnection().execute(
+      'select "event_type", "data" from "integration_event_outbox" where "aggregate_id" = ?',
+      [first.body.transactionId],
+    );
+    expect(lossEvents).toHaveLength(1);
+    expect(lossEvents[0].event_type).toBe('WagerTransactionProcessed');
+    expect(lossEvents[0].data.balance).toEqual({ amount: '100.00', currency: 'BRL' });
   });
 
   it('returns a conflict when the same key is used for a different payload', async () => {
