@@ -14,6 +14,8 @@ import { PendingReferenceWorker } from './application/pending-reference.worker.j
 import { IntegrationEventOutboxWorker } from './application/integration-event-outbox.worker.js';
 import { INTEGRATION_EVENT_PUBLISHER } from './application/ports/integration-event-publisher.js';
 import { SqsIntegrationEventPublisher } from './infrastructure/messaging/sqs-integration-event-publisher.js';
+import { SubmitWagerTransactionService } from './application/submit-wager-transaction.service.js';
+import { SqsWagerTransactionConsumer } from './infrastructure/messaging/sqs-wager-transaction-consumer.js';
 
 @Module({
   imports: [
@@ -27,9 +29,11 @@ import { SqsIntegrationEventPublisher } from './infrastructure/messaging/sqs-int
     AppService,
     WalletMovementService,
     RegisterWagerTransactionService,
+    SubmitWagerTransactionService,
     PendingReferenceWorker,
     IntegrationEventOutboxWorker,
     SqsIntegrationEventPublisher,
+    SqsWagerTransactionConsumer,
     {
       provide: INTEGRATION_EVENT_PUBLISHER,
       useExisting: SqsIntegrationEventPublisher,
