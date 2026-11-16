@@ -493,6 +493,81 @@ describe('WagerTransactionsController (e2e)', () => {
     expect(persisted?.balance.toJSON()).toEqual({ amount: '80.00', currency: 'BRL' });
   });
 
+  it('processes a REFUND delivered before its referenced BET', async () => {
+    const refund = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', 'http-provider:refund-before-bet')
+      .send({
+        providerId: 'http-provider',
+        externalTransactionId: 'refund-before-bet',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        roundId: 'refund-before-bet-round',
+        gameId: 'refund-before-bet-game',
+        kind: 'REFUND',
+        money: { amount: '25.00', currency: 'BRL' },
+        referenceExternalTransactionId: 'bet-arrives-later',
+      })
+      .expect(202);
+
+    expect(refund.body).toMatchObject({
+      status: 'PENDING_REFERENCE',
+      referenceExternalTransactionId: 'bet-arrives-later',
+    });
+    const unchanged = await new MikroOrmWalletRepository(
+      orm.em.fork(),
+    ).findById(wallet.id);
+    expect(unchanged?.balance.toJSON()).toEqual({
+      amount: '100.00',
+      currency: 'BRL',
+    });
+
+    const bet = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', 'http-provider:bet-arrives-later')
+      .send({
+        providerId: 'http-provider',
+        externalTransactionId: 'bet-arrives-later',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        roundId: 'refund-before-bet-round',
+        gameId: 'refund-before-bet-game',
+        kind: 'BET',
+        money: { amount: '25.00', currency: 'BRL' },
+      })
+      .expect(201);
+
+    expect(bet.body.balance).toEqual({ amount: '75.00', currency: 'BRL' });
+    expect(
+      await app
+        .get(PendingReferenceWorker)
+        .runOnce(new Date(Date.now() + 60_000)),
+    ).toBe(1);
+
+    const resolvedRefund = await orm.em.getConnection().execute(
+      'select "status", "reference_transaction_id" from "wager_transactions" where "id" = ?',
+      [refund.body.transactionId],
+    );
+    expect(resolvedRefund[0].status).toBe('PROCESSED');
+    expect(resolvedRefund[0].reference_transaction_id).toBe(bet.body.transactionId);
+
+    const finalWallet = await new MikroOrmWalletRepository(
+      orm.em.fork(),
+    ).findById(wallet.id);
+    expect(finalWallet?.balance.toJSON()).toEqual({
+      amount: '100.00',
+      currency: 'BRL',
+    });
+    const ledgerRows = await orm.em.getConnection().execute(
+      'select "direction", count(*)::int as count from "wallet_ledger_entries" where "wallet_id" = ? group by "direction" order by "direction"',
+      [wallet.id],
+    );
+    expect(ledgerRows).toEqual([
+      { direction: 'CREDIT', count: 1 },
+      { direction: 'DEBIT', count: 1 },
+    ]);
+  });
+
   it('backs off pending reference retries and rejects after the configured attempt limit', async () => {
     const pending = await request(app.getHttpServer())
       .post('/wagering/transactions')
