@@ -17,6 +17,15 @@ export class MikroOrmWalletLedgerRepository implements WalletLedgerRepository {
     return entity ? this.toDomain(entity) : null;
   }
 
+  async findByWallet(walletId: string): Promise<WalletLedgerEntry[]> {
+    const entities = await this.em.find(
+      WalletLedgerEntryEntity,
+      { walletId },
+      { orderBy: { createdAt: 'ASC', id: 'ASC' } },
+    );
+    return entities.map((entity) => this.toDomain(entity));
+  }
+
   async save(entry: WalletLedgerEntry): Promise<void> {
     const entity = this.em.create(WalletLedgerEntryEntity, {
       id: entry.id,

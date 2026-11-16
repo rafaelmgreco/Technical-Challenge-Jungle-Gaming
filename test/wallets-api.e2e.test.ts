@@ -106,6 +106,49 @@ describe('WalletsController (e2e)', () => {
     expect(rows[0]).toEqual({ transactions: '0', entries: '0', events: '0' });
   });
 
+  it('reconciles the stored wallet balance against its immutable ledger', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/wallets')
+      .send({ playerId, initialBalance: { amount: '100.00', currency: 'BRL' } })
+      .expect(201);
+
+    const consistent = await request(app.getHttpServer())
+      .post(`/wallets/${created.body.id}/reconciliation`)
+      .expect(201);
+    expect(consistent.body).toEqual({
+      walletId: created.body.id,
+      storedBalance: { amount: '100.00', currency: 'BRL' },
+      calculatedBalance: { amount: '100.00', currency: 'BRL' },
+      difference: { amount: '0.00', currency: 'BRL' },
+      consistent: true,
+      checkedEntries: 1,
+    });
+
+    await orm.em.getConnection().execute(
+      'update "wallets" set "balance_minor_units" = ? where "id" = ?',
+      [9_900, created.body.id],
+    );
+    const inconsistent = await request(app.getHttpServer())
+      .post(`/wallets/${created.body.id}/reconciliation`)
+      .expect(201);
+    expect(inconsistent.body).toEqual({
+      walletId: created.body.id,
+      storedBalance: { amount: '99.00', currency: 'BRL' },
+      calculatedBalance: { amount: '100.00', currency: 'BRL' },
+      difference: { amount: '-1.00', currency: 'BRL' },
+      consistent: false,
+      checkedEntries: 1,
+    });
+  });
+
+  it('returns not found when reconciling a wallet that does not exist', async () => {
+    const response = await request(app.getHttpServer())
+      .post(`/wallets/${crypto.randomUUID()}/reconciliation`)
+      .expect(404);
+
+    expect(response.body.code).toBe('WALLET_NOT_FOUND');
+  });
+
   it('allows one wallet per currency and reports a duplicate as a conflict', async () => {
     await request(app.getHttpServer())
       .post('/wallets')

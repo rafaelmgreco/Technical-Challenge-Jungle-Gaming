@@ -16,6 +16,7 @@ import { INTEGRATION_EVENT_PUBLISHER } from './application/ports/integration-eve
 import { SqsIntegrationEventPublisher } from './infrastructure/messaging/sqs-integration-event-publisher.js';
 import { SubmitWagerTransactionService } from './application/submit-wager-transaction.service.js';
 import { SqsWagerTransactionConsumer } from './infrastructure/messaging/sqs-wager-transaction-consumer.js';
+import { ReconcileWalletService } from './application/reconcile-wallet.service.js';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { SqsWagerTransactionConsumer } from './infrastructure/messaging/sqs-wage
       useExisting: SqsIntegrationEventPublisher,
     },
     CreateWalletService,
+    ReconcileWalletService,
     MikroOrmWalletUnitOfWork,
     { provide: WALLET_UNIT_OF_WORK, useExisting: MikroOrmWalletUnitOfWork },
   ],

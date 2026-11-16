@@ -4,11 +4,17 @@ import {
   Body,
   Controller,
   HttpStatus,
+  NotFoundException,
   Post,
+  Param,
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { CreateWalletService, WalletAlreadyExistsError } from '../application/create-wallet.service.js';
+import {
+  ReconcileWalletService,
+  WalletNotFoundForReconciliationError,
+} from '../application/reconcile-wallet.service.js';
 import { Money } from '../domain/money/money.js';
 
 function requiredString(value: unknown, field: string): string {
@@ -23,7 +29,27 @@ function requiredString(value: unknown, field: string): string {
 
 @Controller('wallets')
 export class WalletsController {
-  constructor(private readonly createWallet: CreateWalletService) {}
+  constructor(
+    private readonly createWallet: CreateWalletService,
+    private readonly reconcileWallet: ReconcileWalletService,
+  ) {}
+
+  @Post(':walletId/reconciliation')
+  async reconcile(
+    @Param('walletId') walletId: string,
+  ): Promise<Record<string, unknown>> {
+    try {
+      return await this.reconcileWallet.reconcile(walletId);
+    } catch (error) {
+      if (error instanceof WalletNotFoundForReconciliationError) {
+        throw new NotFoundException({
+          code: 'WALLET_NOT_FOUND',
+          message: error.message,
+        });
+      }
+      throw error;
+    }
+  }
 
   @Post()
   async create(
