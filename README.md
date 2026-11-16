@@ -14,7 +14,7 @@ Project for the [Jungle Gaming backend challenge](https://github.com/junglegamin
 
 ## Current status
 
-The repository is in its early stages. It contains a minimal NestJS application, the `Money` value object, the `Wallet` aggregate, a wallet creation endpoint with an atomic `OPENING` entry, persisted wager transactions with idempotent registration, immutable ledger entries, PostgreSQL migrations, MikroORM repositories, and atomic `BET`/`WIN` wallet processing with a pessimistic row lock. Reference-based operations and messaging will be implemented in later steps.
+The repository is in its early stages. It contains a minimal NestJS application, the `Money` value object, the `Wallet` aggregate, a wallet creation endpoint with an atomic `OPENING` entry, persisted wager transactions with idempotent registration, immutable ledger entries, PostgreSQL migrations, MikroORM repositories, and atomic `BET`/`WIN` wallet processing with a pessimistic row lock. `LOSS` transactions are recorded without changing the wallet balance or creating a ledger entry. A `WIN` may reference an already processed `BET`; `REFUND`, `ROLLBACK`, and out-of-order reference handling remain future steps.
 
 ## Getting started
 
@@ -28,7 +28,7 @@ bun run start:dev
 
 The application responds at `http://localhost:3000/`.
 
-The wallet endpoint is `POST /wallets`. The provider endpoint is `POST /wagering/transactions` and requires an `Idempotency-Key` header. The first HTTP version processes unreferenced `BET` and `WIN` requests. Reference-based operations and `LOSS` are not enabled yet.
+The wallet endpoint is `POST /wallets`. The provider endpoint is `POST /wagering/transactions` and requires an `Idempotency-Key` header. The current HTTP version processes `BET`, `WIN`, and `LOSS`, and allows a `WIN` to reference an already processed `BET` from the same provider, player, wallet, currency, and round.
 
 The local PostgreSQL instance uses port `5432`. The default credentials are for local development only; update `.env` if needed.
 

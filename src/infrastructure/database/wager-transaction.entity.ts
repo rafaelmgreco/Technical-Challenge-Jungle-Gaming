@@ -22,6 +22,7 @@ export const WagerTransactionEntitySchema = defineEntity({
     referenceTransactionId: p.string().fieldName('reference_transaction_id').nullable().columnType('text'),
     failureCode: p.string().fieldName('failure_code').nullable().columnType('text'),
     processedAt: p.datetime().fieldName('processed_at').nullable().columnType('timestamptz'),
+    processedBalanceMinorUnits: p.bigint().fieldName('processed_balance_minor_units').nullable().columnType('bigint'),
   },
 });
 

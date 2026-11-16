@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { LedgerDirection, WalletLedgerEntry } from '../domain/ledger/ledger-entry.js';
 import type { WalletBalanceChange } from '../domain/wallet/wallet.js';
 import { InsufficientWalletFundsError } from '../domain/wallet/wallet.js';
+import { Money } from '../domain/money/money.js';
 import {
   InvalidWagerTransactionError,
   InvalidWagerTransactionStateError,
@@ -24,6 +25,13 @@ export class WagerTransactionNotFoundError extends Error {
   }
 }
 
+export class InvalidReferencedTransactionError extends Error {
+  constructor(transactionId: string) {
+    super(`Wager transaction ${transactionId} has an invalid or unavailable reference`);
+    this.name = 'InvalidReferencedTransactionError';
+  }
+}
+
 @Injectable()
 export class WalletMovementService {
   constructor(@Inject(WALLET_UNIT_OF_WORK) private readonly unitOfWork: WalletUnitOfWork) {}
@@ -34,6 +42,36 @@ export class WalletMovementService {
 
   async credit(transactionId: string, processedAt?: Date): Promise<WalletBalanceChange> {
     return this.applyMovement(transactionId, LedgerDirection.Credit, processedAt);
+  }
+
+  async processLoss(transactionId: string, processedAt?: Date): Promise<Money> {
+    return this.unitOfWork.execute(async ({ wallets, transactions }) => {
+      const transaction = await transactions.findByIdForUpdate(transactionId);
+      if (!transaction) {
+        throw new WagerTransactionNotFoundError(transactionId);
+      }
+      if (transaction.status !== WagerTransactionStatus.Pending) {
+        throw new InvalidWagerTransactionStateError(transaction.status);
+      }
+      if (transaction.kind !== WagerTransactionKind.Loss) {
+        throw new InvalidWagerTransactionError('This movement handler only processes LOSS transactions');
+      }
+
+      const wallet = await wallets.findByIdForUpdate(transaction.walletId);
+      if (!wallet) {
+        throw new WalletNotFoundError(transaction.walletId);
+      }
+      if (wallet.playerId !== transaction.playerId) {
+        throw new InvalidWagerTransactionError('Transaction player does not match the wallet owner');
+      }
+      if (wallet.currency !== transaction.money.currency) {
+        throw new InvalidWagerTransactionError('Transaction currency does not match the wallet currency');
+      }
+
+      transaction.markProcessed(undefined, processedAt ?? new Date(), wallet.balance);
+      await transactions.save(transaction);
+      return wallet.balance;
+    });
   }
 
   private async applyMovement(
@@ -59,7 +97,23 @@ export class WalletMovementService {
         );
       }
 
-      const direction = transaction.ledgerDirectionFor();
+      const reference = transaction.referenceExternalTransactionId
+        ? await transactions.findByProviderAndExternalTransactionId(
+            transaction.providerId,
+            transaction.referenceExternalTransactionId,
+          )
+        : undefined;
+      let direction: LedgerDirection | undefined;
+      try {
+        direction = transaction.ledgerDirectionFor(reference ?? undefined);
+      } catch (error) {
+        if (!(error instanceof InvalidWagerTransactionError) || !transaction.referenceExternalTransactionId) {
+          throw error;
+        }
+        transaction.reject('INVALID_REFERENCE');
+        await transactions.save(transaction);
+        return { failure: new InvalidReferencedTransactionError(transaction.id) } as const;
+      }
       if (direction !== expectedDirection) {
         throw new InvalidWagerTransactionError(
           `Transaction kind ${transaction.kind} cannot be processed as ${expectedDirection}`,
@@ -91,7 +145,7 @@ export class WalletMovementService {
         return { failure: error } as const;
       }
 
-      transaction.markProcessed(undefined, at);
+      transaction.markProcessed(reference?.id, at, change.balanceAfter);
       const entry = WalletLedgerEntry.create({
         id: crypto.randomUUID(),
         walletId: wallet.id,

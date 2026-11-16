@@ -58,6 +58,7 @@ export interface WagerTransactionState {
   referenceTransactionId?: string;
   failureCode?: FailureCode;
   processedAt?: Date;
+  processedBalance?: MoneyProps;
 }
 
 export class InvalidWagerTransactionError extends Error {
@@ -93,6 +94,7 @@ export class WagerTransaction {
     private _referenceTransactionId?: string,
     private _failureCode?: FailureCode,
     private _processedAt?: Date,
+    private _processedBalance?: Money,
   ) {}
 
   static create(props: CreateWagerTransactionProps): WagerTransaction {
@@ -166,6 +168,15 @@ export class WagerTransaction {
     if (state.processedAt !== undefined) {
       WagerTransaction.assertValidDate(state.processedAt, 'processedAt');
     }
+    const processedBalance = state.processedBalance
+      ? Money.from(state.processedBalance)
+      : undefined;
+    if (processedBalance && processedBalance.currency !== state.money.currency) {
+      throw new InvalidWagerTransactionError('Processed balance currency must match transaction currency');
+    }
+    if (processedBalance && processedBalance.isNegative()) {
+      throw new InvalidWagerTransactionError('Processed balance cannot be negative');
+    }
 
     return new WagerTransaction(
       state.id,
@@ -185,6 +196,7 @@ export class WagerTransaction {
       state.referenceTransactionId,
       state.failureCode,
       state.processedAt ? new Date(state.processedAt.getTime()) : undefined,
+      processedBalance,
     );
   }
 
@@ -204,13 +216,23 @@ export class WagerTransaction {
     return this._processedAt ? new Date(this._processedAt.getTime()) : undefined;
   }
 
+  get processedBalance(): Money | undefined {
+    return this._processedBalance;
+  }
+
   get createdAt(): Date {
     return new Date(this._createdAt.getTime());
   }
 
-  markProcessed(referenceTransactionId: string | undefined, at: Date): void {
+  markProcessed(referenceTransactionId: string | undefined, at: Date, balance?: Money): void {
     this.assertCanTransition();
     WagerTransaction.assertValidDate(at, 'processedAt');
+    if (balance && balance.currency !== this.money.currency) {
+      throw new InvalidWagerTransactionError('Processed balance currency must match transaction currency');
+    }
+    if (balance && balance.isNegative()) {
+      throw new InvalidWagerTransactionError('Processed balance cannot be negative');
+    }
 
     if (
       (this.referenceExternalTransactionId !== undefined ||
@@ -234,6 +256,7 @@ export class WagerTransaction {
     this._referenceTransactionId = referenceTransactionId;
     this._failureCode = undefined;
     this._processedAt = new Date(at.getTime());
+    this._processedBalance = balance;
     this._status = WagerTransactionStatus.Processed;
   }
 

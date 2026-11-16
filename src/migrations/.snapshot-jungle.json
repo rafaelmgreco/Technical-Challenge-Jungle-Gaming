@@ -219,6 +219,23 @@
           "enumItems": [],
           "mappedType": "datetime"
         },
+        "processed_balance_minor_units": {
+          "name": "processed_balance_minor_units",
+          "type": "bigint",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "collation": null,
+          "enumItems": [],
+          "mappedType": "bigint"
+        },
         "provider_id": {
           "name": "provider_id",
           "type": "text",
@@ -410,6 +427,12 @@
           "expression": "((status = 'PROCESSED'::text) AND (processed_at IS NOT NULL)) OR ((status <> 'PROCESSED'::text) AND (processed_at IS NULL))",
           "definition": "CHECK ((((status = 'PROCESSED'::text) AND (processed_at IS NOT NULL)) OR ((status <> 'PROCESSED'::text) AND (processed_at IS NULL))))",
           "columnName": "processed_at"
+        },
+        {
+          "name": "wager_transactions_processed_balance_non_negative_check",
+          "expression": "(processed_balance_minor_units IS NULL) OR (processed_balance_minor_units >= 0)",
+          "definition": "CHECK (((processed_balance_minor_units IS NULL) OR (processed_balance_minor_units >= 0)))",
+          "columnName": "processed_balance_minor_units"
         },
         {
           "name": "wager_transactions_processed_reference_check",

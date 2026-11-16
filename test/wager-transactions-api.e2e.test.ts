@@ -118,6 +118,159 @@ describe('WagerTransactionsController (e2e)', () => {
     });
   });
 
+  it('processes a referenced WIN against a processed BET with a different amount', async () => {
+    const bet = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', 'http-provider:reference-bet-1')
+      .send({
+        providerId: 'http-provider',
+        externalTransactionId: 'reference-bet-1',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        roundId: 'reference-round-1',
+        gameId: 'reference-game-1',
+        kind: 'BET',
+        money: { amount: '25.00', currency: 'BRL' },
+      })
+      .expect(201);
+
+    const winBody = {
+      providerId: 'http-provider',
+      externalTransactionId: 'reference-win-1',
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'reference-round-1',
+      gameId: 'reference-game-1',
+      kind: 'WIN',
+      money: { amount: '10.00', currency: 'BRL' },
+      referenceExternalTransactionId: 'reference-bet-1',
+    };
+    const key = 'http-provider:reference-win-1';
+
+    const first = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', key)
+      .send(winBody)
+      .expect(201);
+
+    expect(first.body).toMatchObject({
+      status: 'PROCESSED',
+      balance: { amount: '85.00', currency: 'BRL' },
+      idempotentReplay: false,
+    });
+
+    const retry = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', key)
+      .send(winBody)
+      .expect(200);
+    expect(retry.body).toEqual({ ...first.body, idempotentReplay: true });
+
+    const storedReference = await orm.em.getConnection().execute(
+      'select "reference_transaction_id" from "wager_transactions" where "id" = ?',
+      [first.body.transactionId],
+    );
+    const betRow = await orm.em.getConnection().execute(
+      'select "id" from "wager_transactions" where "external_transaction_id" = ?',
+      ['reference-bet-1'],
+    );
+    expect(storedReference[0].reference_transaction_id).toBe(betRow[0].id);
+    expect(bet.body.status).toBe('PROCESSED');
+  });
+
+  it('rejects an unavailable WIN reference and returns the same rejection on retry', async () => {
+    const body = {
+      providerId: 'http-provider',
+      externalTransactionId: 'reference-win-missing',
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'missing-reference-round',
+      gameId: 'missing-reference-game',
+      kind: 'WIN',
+      money: { amount: '5.00', currency: 'BRL' },
+      referenceExternalTransactionId: 'unknown-bet',
+    };
+    const key = 'http-provider:reference-win-missing';
+
+    const first = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', key)
+      .send(body)
+      .expect(422);
+    expect(first.body).toMatchObject({ status: 'REJECTED', failureCode: 'INVALID_REFERENCE' });
+
+    const retry = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', key)
+      .send(body)
+      .expect(422);
+    expect(retry.body).toMatchObject({
+      transactionId: first.body.transactionId,
+      status: 'REJECTED',
+      failureCode: 'INVALID_REFERENCE',
+      idempotentReplay: true,
+    });
+  });
+
+  it('processes LOSS without changing the balance or creating a ledger entry, and replays the original result', async () => {
+    const body = {
+      providerId: 'http-provider',
+      externalTransactionId: 'http-loss-1',
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'http-round-loss',
+      gameId: 'http-game-loss',
+      kind: 'LOSS',
+      money: { amount: '25.00', currency: 'BRL' },
+    };
+    const key = 'http-provider:http-loss-1';
+
+    const first = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', key)
+      .send(body)
+      .expect(201);
+
+    expect(first.body).toMatchObject({
+      status: 'PROCESSED',
+      balance: { amount: '100.00', currency: 'BRL' },
+      idempotentReplay: false,
+    });
+
+    await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', 'http-provider:http-win-after-loss')
+      .send({
+        ...body,
+        externalTransactionId: 'http-win-after-loss',
+        roundId: 'http-round-win-after-loss',
+        kind: 'WIN',
+        money: { amount: '10.00', currency: 'BRL' },
+      })
+      .expect(201);
+
+    const retry = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', key)
+      .send(body)
+      .expect(200);
+
+    expect(retry.body).toEqual({
+      transactionId: first.body.transactionId,
+      status: 'PROCESSED',
+      balance: { amount: '100.00', currency: 'BRL' },
+      idempotentReplay: true,
+    });
+
+    const persisted = await new MikroOrmWalletRepository(orm.em.fork()).findById(wallet.id);
+    expect(persisted?.balance.toJSON()).toEqual({ amount: '110.00', currency: 'BRL' });
+    const lossLedger = await orm.em.getConnection().execute(
+      'select count(*)::int as count from "wallet_ledger_entries" where "transaction_id" = ?',
+      [first.body.transactionId],
+    );
+    expect(lossLedger[0].count).toBe(0);
+  });
+
   it('returns a conflict when the same key is used for a different payload', async () => {
     const body = {
       providerId: 'http-provider',

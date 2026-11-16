@@ -63,6 +63,7 @@ export class MikroOrmWagerTransactionRepository implements WagerTransactionRepos
       referenceTransactionId: transaction.referenceTransactionId ?? null,
       failureCode: transaction.failureCode ?? null,
       processedAt: transaction.processedAt ?? null,
+      processedBalanceMinorUnits: transaction.processedBalance?.toMinorUnits() ?? null,
     };
 
     let entity = await this.em.findOne(WagerTransactionEntity, { id: transaction.id });
@@ -95,6 +96,9 @@ export class MikroOrmWagerTransactionRepository implements WagerTransactionRepos
       referenceTransactionId: entity.referenceTransactionId ?? undefined,
       failureCode: entity.failureCode ?? undefined,
       processedAt: entity.processedAt ?? undefined,
+      processedBalance: entity.processedBalanceMinorUnits == null
+        ? undefined
+        : Money.fromMinorUnits(entity.processedBalanceMinorUnits, entity.currency).toJSON(),
     });
   }
 }

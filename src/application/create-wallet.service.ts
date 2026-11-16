@@ -51,7 +51,7 @@ export class CreateWalletService {
             money: initialBalance,
             createdAt: openedAt,
           });
-          transaction.markProcessed(undefined, openedAt);
+          transaction.markProcessed(undefined, openedAt, initialBalance);
 
           const entry = WalletLedgerEntry.create({
             id: crypto.randomUUID(),

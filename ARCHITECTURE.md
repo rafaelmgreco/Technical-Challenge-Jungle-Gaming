@@ -22,13 +22,13 @@ A transaction starts in `PENDING`.
 
 Failure codes are stable, uppercase, machine-readable strings, for example `INSUFFICIENT_FUNDS`. The financial processing use cases will define the specific failure codes.
 
-Wager transactions are persisted with their provider identity, idempotency key, payload hash, wallet, amount, status, and processing result. PostgreSQL enforces unique idempotency keys and external transaction IDs per provider. The current movement service processes unreferenced `BET` debits and `WIN` credits; reference-based operations are still pending.
+Wager transactions are persisted with their provider identity, idempotency key, payload hash, wallet, amount, status, and processing result. PostgreSQL enforces unique idempotency keys and external transaction IDs per provider. The movement service processes `BET` debits and `WIN` credits. A `WIN` may reference an already processed `BET`; the provider, player, wallet, currency, and round must match, but the amount may differ. `LOSS` is recorded with the wallet balance captured at processing time, without changing the wallet or creating a ledger entry; this snapshot keeps replay responses stable if later movements change the balance. `REFUND`, `ROLLBACK`, and out-of-order reference handling are still pending.
 
 Registration treats a retry with the same provider, idempotency key, and payload hash as the original transaction and returns that stored transaction. Reusing the key with a different payload, or reusing the provider's external transaction ID with a different key, is a conflict. Concurrent identical registrations converge on one database row.
 
 ## HTTP provider endpoint
 
-`POST /wagering/transactions` requires the `Idempotency-Key` header. The payload hash is SHA-256 over canonical JSON of the business fields (`providerId`, `externalTransactionId`, `playerId`, `walletId`, `roundId`, `gameId`, `kind`, and normalized `money`), with object keys sorted recursively; the header is excluded. The current endpoint processes unreferenced `BET` and `WIN` requests only. It returns `201` for a new processed transaction, `200` for a processed replay, `409` for an idempotency or external-ID conflict, and `422` for a business rejection or unsupported operation.
+`POST /wagering/transactions` requires the `Idempotency-Key` header. The payload hash is SHA-256 over canonical JSON of the business fields (`providerId`, `externalTransactionId`, `playerId`, `walletId`, `roundId`, `gameId`, `kind`, normalized `money`, and optional `referenceExternalTransactionId`), with object keys sorted recursively; the header is excluded. The current endpoint processes `BET`, `WIN`, and `LOSS`; a `WIN` can reference an already processed `BET`. It returns `201` for a new processed transaction, `200` for a processed replay, `409` for an idempotency or external-ID conflict, and `422` for a business rejection or unsupported operation.
 
 Authentication is not implemented in this local challenge prototype. Before external exposure, the controller should use a `ProviderIdentityPort` backed by an external OIDC identity provider; health endpoints can remain public.
 
@@ -57,7 +57,7 @@ Wallet creation also runs in one PostgreSQL transaction. A positive initial bala
 
 ## Pending decisions
 
-- Process `LOSS`, referenced `WIN`, `REFUND`, and `ROLLBACK` operations, including out-of-order references.
+- Process `REFUND` and `ROLLBACK` operations, including out-of-order references.
 - Define the local SQS emulator and retry and DLQ policies.
 
 ## Local persistence

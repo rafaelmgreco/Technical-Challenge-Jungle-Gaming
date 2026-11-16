@@ -26,6 +26,7 @@ import {
   RegisterWagerTransactionService,
 } from '../application/register-wager-transaction.service.js';
 import {
+  InvalidReferencedTransactionError,
   WalletMovementService,
   WalletNotFoundError,
 } from '../application/wallet-movement.service.js';
@@ -40,6 +41,7 @@ interface SubmitWagerTransactionBody {
   gameId: string;
   kind: WagerTransactionKind;
   money: Money;
+  referenceExternalTransactionId?: string;
 }
 
 function badRequest(message: string): BadRequestException {
@@ -63,16 +65,19 @@ function parseBody(value: unknown): SubmitWagerTransactionBody {
     throw badRequest('kind is not a supported wager transaction kind');
   }
   const kind = kindValue as WagerTransactionKind;
-  if (kind !== WagerTransactionKind.Bet && kind !== WagerTransactionKind.Win) {
+  if (kind !== WagerTransactionKind.Bet && kind !== WagerTransactionKind.Win && kind !== WagerTransactionKind.Loss) {
     throw new UnprocessableEntityException({
       code: 'UNSUPPORTED_TRANSACTION_KIND',
-      message: `The HTTP endpoint currently processes BET and WIN; ${kind} is not available yet`,
+      message: `The HTTP endpoint currently processes BET, WIN, and LOSS; ${kind} is not available yet`,
     });
   }
-  if (body.referenceExternalTransactionId !== undefined) {
+  const referenceExternalTransactionId = body.referenceExternalTransactionId === undefined
+    ? undefined
+    : requiredString(body.referenceExternalTransactionId, 'referenceExternalTransactionId');
+  if (referenceExternalTransactionId !== undefined && kind !== WagerTransactionKind.Win) {
     throw new UnprocessableEntityException({
-      code: 'REFERENCE_PROCESSING_UNAVAILABLE',
-      message: 'Reference-based transactions are not available yet',
+      code: 'UNSUPPORTED_REFERENCE_KIND',
+      message: 'The HTTP endpoint currently supports references only for WIN transactions',
     });
   }
   if (body.money === null || typeof body.money !== 'object' || Array.isArray(body.money)) {
@@ -98,6 +103,7 @@ function parseBody(value: unknown): SubmitWagerTransactionBody {
     gameId: requiredString(body.gameId, 'gameId'),
     kind,
     money,
+    referenceExternalTransactionId,
   };
 }
 
@@ -141,6 +147,9 @@ export class WagerTransactionsController {
       playerId: body.playerId,
       providerId: body.providerId,
       roundId: body.roundId,
+      ...(body.referenceExternalTransactionId === undefined
+        ? {}
+        : { referenceExternalTransactionId: body.referenceExternalTransactionId }),
       walletId: body.walletId,
     };
     const payloadHash = createHash('sha256').update(canonicalize(payload)).digest('hex');
@@ -164,7 +173,9 @@ export class WagerTransactionsController {
     const transaction = registrationResult.transaction;
     if (transaction.status === WagerTransactionStatus.Pending) {
       try {
-        if (transaction.kind === WagerTransactionKind.Bet) {
+        if (transaction.kind === WagerTransactionKind.Loss) {
+          await this.movements.processLoss(transaction.id);
+        } else if (transaction.kind === WagerTransactionKind.Bet) {
           await this.movements.debit(transaction.id);
         } else {
           await this.movements.credit(transaction.id);
@@ -176,6 +187,15 @@ export class WagerTransactionsController {
             transactionId: transaction.id,
             status: WagerTransactionStatus.Rejected,
             failureCode: 'INSUFFICIENT_FUNDS',
+            idempotentReplay: registrationResult.replayed,
+          };
+        }
+        if (error instanceof InvalidReferencedTransactionError) {
+          response.status(HttpStatus.UNPROCESSABLE_ENTITY);
+          return {
+            transactionId: transaction.id,
+            status: WagerTransactionStatus.Rejected,
+            failureCode: 'INVALID_REFERENCE',
             idempotentReplay: registrationResult.replayed,
           };
         }
@@ -200,7 +220,8 @@ export class WagerTransactionsController {
       transaction: await transactions.findById(transaction.id),
       entry: await ledger.findByWalletAndTransactionId(transaction.walletId, transaction.id),
     }));
-    if (processed.transaction?.status !== WagerTransactionStatus.Processed || !processed.entry) {
+    const resultBalance = processed.transaction?.processedBalance ?? processed.entry?.balanceAfter;
+    if (processed.transaction?.status !== WagerTransactionStatus.Processed || !resultBalance) {
       throw new InternalServerErrorException({
         code: 'PROCESSED_RESULT_MISSING',
         message: 'The processed transaction result could not be loaded',
@@ -211,7 +232,7 @@ export class WagerTransactionsController {
     return {
       transactionId: processed.transaction.id,
       status: processed.transaction.status,
-      balance: processed.entry.balanceAfter.toJSON(),
+      balance: resultBalance.toJSON(),
       idempotentReplay: registrationResult.replayed,
     };
   }
