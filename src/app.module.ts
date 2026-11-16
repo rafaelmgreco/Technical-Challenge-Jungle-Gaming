@@ -10,6 +10,7 @@ import { WagerTransactionsController } from './wagering/wager-transactions.contr
 import { WalletsController } from './wallets/wallets.controller.js';
 import { CreateWalletService } from './application/create-wallet.service.js';
 import { MikroOrmWalletUnitOfWork } from './infrastructure/persistence/mikro-orm-wallet-unit-of-work.js';
+import { PendingReferenceWorker } from './application/pending-reference.worker.js';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { MikroOrmWalletUnitOfWork } from './infrastructure/persistence/mikro-orm
     AppService,
     WalletMovementService,
     RegisterWagerTransactionService,
+    PendingReferenceWorker,
     CreateWalletService,
     MikroOrmWalletUnitOfWork,
     { provide: WALLET_UNIT_OF_WORK, useExisting: MikroOrmWalletUnitOfWork },

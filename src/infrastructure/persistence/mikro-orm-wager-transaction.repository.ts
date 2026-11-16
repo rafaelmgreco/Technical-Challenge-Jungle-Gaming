@@ -55,6 +55,18 @@ export class MikroOrmWagerTransactionRepository implements WagerTransactionRepos
     return entity ? this.toDomain(entity) : null;
   }
 
+  async findDuePendingReferences(at: Date, limit: number): Promise<WagerTransaction[]> {
+    const entities = await this.em.find(
+      WagerTransactionEntity,
+      {
+        status: WagerTransactionStatus.PendingReference,
+        referenceNextAttemptAt: { $lte: at },
+      },
+      { orderBy: { referenceNextAttemptAt: 'asc' }, limit },
+    );
+    return entities.map((entity) => this.toDomain(entity));
+  }
+
   async save(transaction: WagerTransaction): Promise<void> {
     const data = {
       id: transaction.id,
@@ -76,6 +88,8 @@ export class MikroOrmWagerTransactionRepository implements WagerTransactionRepos
       failureCode: transaction.failureCode ?? null,
       processedAt: transaction.processedAt ?? null,
       processedBalanceMinorUnits: transaction.processedBalance?.toMinorUnits() ?? null,
+      referenceAttemptCount: transaction.referenceAttemptCount,
+      referenceNextAttemptAt: transaction.referenceNextAttemptAt ?? null,
     };
 
     let entity = await this.em.findOne(WagerTransactionEntity, { id: transaction.id });
@@ -111,6 +125,8 @@ export class MikroOrmWagerTransactionRepository implements WagerTransactionRepos
       processedBalance: entity.processedBalanceMinorUnits == null
         ? undefined
         : Money.fromMinorUnits(entity.processedBalanceMinorUnits, entity.currency).toJSON(),
+      referenceAttemptCount: entity.referenceAttemptCount,
+      referenceNextAttemptAt: entity.referenceNextAttemptAt ?? undefined,
     });
   }
 }

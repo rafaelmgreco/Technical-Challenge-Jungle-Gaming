@@ -11,6 +11,18 @@ import {
 } from '../domain/wager-transaction/wager-transaction.js';
 import { WALLET_UNIT_OF_WORK, type WalletUnitOfWork } from './ports/wallet-unit-of-work.js';
 
+const MAX_REFERENCE_ATTEMPTS = 5;
+const REFERENCE_RETRY_BASE_DELAY_MS = 1_000;
+const REFERENCE_RETRY_MAX_DELAY_MS = 60_000;
+
+function referenceRetryAt(at: Date, attemptCount: number): Date {
+  const delay = Math.min(
+    REFERENCE_RETRY_MAX_DELAY_MS,
+    REFERENCE_RETRY_BASE_DELAY_MS * 2 ** (attemptCount - 1),
+  );
+  return new Date(at.getTime() + delay);
+}
+
 export class WalletNotFoundError extends Error {
   constructor(walletId: string) {
     super(`Wallet ${walletId} was not found`);
@@ -47,12 +59,25 @@ export class WalletMovementService {
     return this.applyMovement(transactionId, LedgerDirection.Debit, processedAt);
   }
 
-  async credit(transactionId: string, processedAt?: Date): Promise<WalletBalanceChange> {
-    return this.applyMovement(transactionId, LedgerDirection.Credit, processedAt);
+  async credit(
+    transactionId: string,
+    processedAt?: Date,
+    onlyWhenReferenceRetryIsDue = false,
+  ): Promise<WalletBalanceChange> {
+    return this.applyMovement(
+      transactionId,
+      LedgerDirection.Credit,
+      processedAt,
+      onlyWhenReferenceRetryIsDue,
+    );
   }
 
-  async rollback(transactionId: string, processedAt?: Date): Promise<WalletBalanceChange> {
-    return this.applyMovement(transactionId, undefined, processedAt);
+  async rollback(
+    transactionId: string,
+    processedAt?: Date,
+    onlyWhenReferenceRetryIsDue = false,
+  ): Promise<WalletBalanceChange> {
+    return this.applyMovement(transactionId, undefined, processedAt, onlyWhenReferenceRetryIsDue);
   }
 
   async processLoss(transactionId: string, processedAt?: Date): Promise<Money> {
@@ -89,6 +114,7 @@ export class WalletMovementService {
     transactionId: string,
     expectedDirection: LedgerDirection | undefined,
     processedAt?: Date,
+    onlyWhenReferenceRetryIsDue = false,
   ): Promise<WalletBalanceChange> {
     const outcome = await this.unitOfWork.execute(async ({ wallets, ledger, transactions }) => {
       const transaction = await transactions.findByIdForUpdate(transactionId);
@@ -100,6 +126,16 @@ export class WalletMovementService {
         transaction.status !== WagerTransactionStatus.PendingReference
       ) {
         throw new InvalidWagerTransactionStateError(transaction.status);
+      }
+      const at = processedAt ?? new Date();
+      const nextReferenceAttemptAt = transaction.referenceNextAttemptAt;
+      if (
+        onlyWhenReferenceRetryIsDue &&
+        transaction.status === WagerTransactionStatus.PendingReference &&
+        nextReferenceAttemptAt !== undefined &&
+        nextReferenceAttemptAt.getTime() > at.getTime()
+      ) {
+        return { pendingReference: new WagerTransactionPendingReferenceError(transaction.id) } as const;
       }
       const expectedKindIsSupported = expectedDirection === undefined
         ? transaction.kind === WagerTransactionKind.Rollback
@@ -120,9 +156,20 @@ export class WalletMovementService {
         : undefined;
       if (transaction.referenceExternalTransactionId && !reference) {
         if (transaction.status === WagerTransactionStatus.Pending) {
-          transaction.markPendingReference();
-          await transactions.save(transaction);
+          transaction.markPendingReference(referenceRetryAt(at, 1));
+        } else {
+          const attempts = transaction.recordReferenceRetry(
+            referenceRetryAt(at, transaction.referenceAttemptCount + 1),
+          );
+          if (attempts >= MAX_REFERENCE_ATTEMPTS) {
+            transaction.reject('REFERENCE_NOT_FOUND');
+            await transactions.save(transaction);
+            return {
+              failure: new InvalidReferencedTransactionError(transaction.id, 'REFERENCE_NOT_FOUND'),
+            } as const;
+          }
         }
+        await transactions.save(transaction);
         return { pendingReference: new WagerTransactionPendingReferenceError(transaction.id) } as const;
       }
       if (reference) {
@@ -140,9 +187,20 @@ export class WalletMovementService {
           reference.status === WagerTransactionStatus.PendingReference
         ) {
           if (transaction.status === WagerTransactionStatus.Pending) {
-            transaction.markPendingReference();
-            await transactions.save(transaction);
+            transaction.markPendingReference(referenceRetryAt(at, 1));
+          } else {
+            const attempts = transaction.recordReferenceRetry(
+              referenceRetryAt(at, transaction.referenceAttemptCount + 1),
+            );
+            if (attempts >= MAX_REFERENCE_ATTEMPTS) {
+              transaction.reject('REFERENCE_NOT_FOUND');
+              await transactions.save(transaction);
+              return {
+                failure: new InvalidReferencedTransactionError(transaction.id, 'REFERENCE_NOT_FOUND'),
+              } as const;
+            }
           }
+          await transactions.save(transaction);
           return { pendingReference: new WagerTransactionPendingReferenceError(transaction.id) } as const;
         }
         if (reference.status !== WagerTransactionStatus.Processed) {
@@ -199,7 +257,6 @@ export class WalletMovementService {
         }
       }
 
-      const at = processedAt ?? new Date();
       let change: WalletBalanceChange;
       try {
         change =

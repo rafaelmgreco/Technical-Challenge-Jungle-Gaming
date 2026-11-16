@@ -20,9 +20,9 @@ A transaction starts in `PENDING`.
 
 `OPENING` represents only the internal opening credit for a wallet. The HTTP and SQS adapters must reject `OPENING` as a provider-submitted operation.
 
-Failure codes are stable, uppercase, machine-readable strings. The implemented financial rejection codes include `INSUFFICIENT_FUNDS`, `INVALID_REFERENCE`, `REFERENCE_ALREADY_REVERSED`, and `ROLLBACK_INSUFFICIENT_FUNDS`.
+Failure codes are stable, uppercase, machine-readable strings. The implemented financial rejection codes include `INSUFFICIENT_FUNDS`, `INVALID_REFERENCE`, `REFERENCE_ALREADY_REVERSED`, `REFERENCE_NOT_FOUND`, and `ROLLBACK_INSUFFICIENT_FUNDS`.
 
-Wager transactions are persisted with their provider identity, idempotency key, payload hash, wallet, amount, status, and processing result. PostgreSQL enforces unique idempotency keys and external transaction IDs per provider. The movement service processes `BET` debits, `WIN` credits, `REFUND` credits, and `ROLLBACK` in the opposite direction of its reference. A `WIN` may reference an already processed `BET`; the provider, player, wallet, currency, and round must match, but the amount may differ. A `REFUND` must match those same fields and the bet amount, and each processed bet can be refunded only once. A `ROLLBACK` must match the referenced `BET`, `WIN`, or `REFUND` amount and each processed transaction can be rolled back only once. The wallet lock serializes competing reversals, and partial unique indexes protect both invariants in PostgreSQL. A rollback debit that would make the balance negative is rejected with `ROLLBACK_INSUFFICIENT_FUNDS`. `LOSS` is recorded with the wallet balance captured at processing time, without changing the wallet or creating a ledger entry; this snapshot keeps replay responses stable if later movements change the balance. A referenced transaction whose source is absent or still processing is stored as `PENDING_REFERENCE`; automatic polling or SQS reprocessing remains pending.
+Wager transactions are persisted with their provider identity, idempotency key, payload hash, wallet, amount, status, and processing result. PostgreSQL enforces unique idempotency keys and external transaction IDs per provider. The movement service processes `BET` debits, `WIN` credits, `REFUND` credits, and `ROLLBACK` in the opposite direction of its reference. A `WIN` may reference an already processed `BET`; the provider, player, wallet, currency, and round must match, but the amount may differ. A `REFUND` must match those same fields and the bet amount, and each processed bet can be refunded only once. A `ROLLBACK` must match the referenced `BET`, `WIN`, or `REFUND` amount and each processed transaction can be rolled back only once. The wallet lock serializes competing reversals, and partial unique indexes protect both invariants in PostgreSQL. A rollback debit that would make the balance negative is rejected with `ROLLBACK_INSUFFICIENT_FUNDS`. `LOSS` is recorded with the wallet balance captured at processing time, without changing the wallet or creating a ledger entry; this snapshot keeps replay responses stable if later movements change the balance. A referenced transaction whose source is absent or still processing is stored as `PENDING_REFERENCE`. A scheduled database worker polls every second, reads batches of up to 50 due references, and allows up to five attempts total with delays doubling from one second; it marks exhausted references `REJECTED` with `REFERENCE_NOT_FOUND`.
 
 Registration treats a retry with the same provider, idempotency key, and payload hash as the original transaction and returns that stored transaction. Reusing the key with a different payload, or reusing the provider's external transaction ID with a different key, is a conflict. Concurrent identical registrations converge on one database row.
 
@@ -57,7 +57,8 @@ Wallet creation also runs in one PostgreSQL transaction. A positive initial bala
 
 ## Pending decisions
 
-- Queue and reprocess out-of-order references.
+- Publish a `WagerTransactionRejected` event when pending-reference retries are exhausted.
+- Add SQS inbox/outbox processing and the local SQS emulator.
 - Define the local SQS emulator and retry and DLQ policies.
 
 ## Local persistence

@@ -12,6 +12,7 @@ import {
 
 const createdAt = new Date('2026-01-01T00:00:00.000Z');
 const processedAt = new Date('2026-01-02T00:00:00.000Z');
+const retryAt = new Date('2026-01-02T00:00:01.000Z');
 
 function createTransaction(
   overrides: Partial<CreateWagerTransactionProps> = {},
@@ -84,15 +85,19 @@ describe('WagerTransaction', () => {
       referenceExternalTransactionId: 'bet-1',
     });
 
-    refund.markPendingReference();
+    refund.markPendingReference(retryAt);
 
     expect(refund.status).toBe(WagerTransactionStatus.PendingReference);
+    expect(refund.referenceAttemptCount).toBe(1);
+    expect(refund.referenceNextAttemptAt).toEqual(retryAt);
+    expect(refund.recordReferenceRetry(processedAt)).toBe(2);
+    expect(refund.referenceNextAttemptAt).toEqual(processedAt);
   });
 
   it('does not allow PENDING_REFERENCE without a reference', () => {
     const bet = createTransaction();
 
-    expect(() => bet.markPendingReference()).toThrow(
+    expect(() => bet.markPendingReference(retryAt)).toThrow(
       InvalidWagerTransactionStateError,
     );
   });
@@ -113,7 +118,7 @@ describe('WagerTransaction', () => {
       kind: WagerTransactionKind.Refund,
       referenceExternalTransactionId: 'bet-1',
     });
-    refund.markPendingReference();
+    refund.markPendingReference(retryAt);
 
     expect(() => refund.markProcessed(undefined, processedAt)).toThrow(
       InvalidWagerTransactionError,
@@ -160,7 +165,7 @@ describe('WagerTransaction', () => {
     expect(() => processed.fail('PERMANENT_INFRASTRUCTURE_ERROR')).toThrow(
       InvalidWagerTransactionStateError,
     );
-    expect(() => processed.markPendingReference()).toThrow(
+    expect(() => processed.markPendingReference(retryAt)).toThrow(
       InvalidWagerTransactionStateError,
     );
     expect(() => processed.markProcessed(undefined, processedAt)).toThrow(
@@ -320,7 +325,7 @@ describe('WagerTransaction', () => {
     expect(processed.status).toBe(WagerTransactionStatus.Processed);
     expect(processed.referenceTransactionId).toBe('internal-bet-1');
     expect(processed.processedAt).toEqual(processedAt);
-    expect(() => processed.markPendingReference()).toThrow(
+    expect(() => processed.markPendingReference(retryAt)).toThrow(
       InvalidWagerTransactionStateError,
     );
   });

@@ -8,6 +8,7 @@ import { AppModule } from '../src/app.module.js';
 import { Money } from '../src/domain/money/money.js';
 import { Wallet } from '../src/domain/wallet/wallet.js';
 import { MikroOrmWalletRepository } from '../src/infrastructure/persistence/mikro-orm-wallet.repository.js';
+import { PendingReferenceWorker } from '../src/application/pending-reference.worker.js';
 
 describe('WagerTransactionsController (e2e)', () => {
   let app: INestApplication<App>;
@@ -248,6 +249,102 @@ describe('WagerTransactionsController (e2e)', () => {
       balance: { amount: '80.00', currency: 'BRL' },
       idempotentReplay: true,
     });
+  });
+
+  it('reprocesses a due pending WIN after its BET arrives', async () => {
+    const pending = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', 'http-provider:worker-pending-win')
+      .send({
+        providerId: 'http-provider',
+        externalTransactionId: 'worker-pending-win',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        roundId: 'worker-reference-round',
+        gameId: 'worker-reference-game',
+        kind: 'WIN',
+        money: { amount: '5.00', currency: 'BRL' },
+        referenceExternalTransactionId: 'worker-reference-bet',
+      })
+      .expect(202);
+
+    await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', 'http-provider:worker-reference-bet')
+      .send({
+        providerId: 'http-provider',
+        externalTransactionId: 'worker-reference-bet',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        roundId: 'worker-reference-round',
+        gameId: 'worker-reference-game',
+        kind: 'BET',
+        money: { amount: '25.00', currency: 'BRL' },
+      })
+      .expect(201);
+
+    const attempted = await app.get(PendingReferenceWorker).runOnce(new Date(Date.now() + 60_000));
+    expect(attempted).toBe(1);
+    const transaction = await orm.em.getConnection().execute(
+      'select "status", "reference_transaction_id" from "wager_transactions" where "id" = ?',
+      [pending.body.transactionId],
+    );
+    expect(transaction[0].status).toBe('PROCESSED');
+    expect(transaction[0].reference_transaction_id).toBeTruthy();
+    const persisted = await new MikroOrmWalletRepository(orm.em.fork()).findById(wallet.id);
+    expect(persisted?.balance.toJSON()).toEqual({ amount: '80.00', currency: 'BRL' });
+  });
+
+  it('backs off pending reference retries and rejects after the configured attempt limit', async () => {
+    const pending = await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', 'http-provider:worker-expiring-win')
+      .send({
+        providerId: 'http-provider',
+        externalTransactionId: 'worker-expiring-win',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        roundId: 'worker-expiring-round',
+        gameId: 'worker-expiring-game',
+        kind: 'WIN',
+        money: { amount: '5.00', currency: 'BRL' },
+        referenceExternalTransactionId: 'never-arriving-bet',
+      })
+      .expect(202);
+
+    const worker = app.get(PendingReferenceWorker);
+    let row = await orm.em.getConnection().execute(
+      'select "reference_attempt_count", "reference_next_attempt_at" from "wager_transactions" where "id" = ?',
+      [pending.body.transactionId],
+    );
+    expect(row[0].reference_attempt_count).toBe(1);
+    const initialNextAttempt = new Date(String(row[0].reference_next_attempt_at));
+    expect(Number.isNaN(initialNextAttempt.getTime())).toBe(false);
+    expect(await worker.runOnce(new Date(initialNextAttempt.getTime() - 1))).toBe(0);
+    let runAt = new Date(initialNextAttempt.getTime() + 1);
+
+    for (const expectedAttempt of [2, 3, 4, 5]) {
+      expect(await worker.runOnce(runAt)).toBe(1);
+      row = await orm.em.getConnection().execute(
+        'select "status", "failure_code", "reference_attempt_count", "reference_next_attempt_at" from "wager_transactions" where "id" = ?',
+        [pending.body.transactionId],
+      );
+      expect(row[0].reference_attempt_count).toBe(expectedAttempt);
+      if (expectedAttempt < 5) {
+        expect(row[0].status).toBe('PENDING_REFERENCE');
+        const nextAttempt = new Date(String(row[0].reference_next_attempt_at));
+        expect(Number.isNaN(nextAttempt.getTime())).toBe(false);
+        expect(nextAttempt.getTime() - runAt.getTime()).toBe(1_000 * 2 ** (expectedAttempt - 1));
+        runAt = new Date(nextAttempt.getTime() + 1);
+      } else {
+        expect(row[0].status).toBe('REJECTED');
+        expect(row[0].failure_code).toBe('REFERENCE_NOT_FOUND');
+        expect(row[0].reference_next_attempt_at).toBeNull();
+      }
+    }
+
+    const persisted = await new MikroOrmWalletRepository(orm.em.fork()).findById(wallet.id);
+    expect(persisted?.balance.toJSON()).toEqual({ amount: '100.00', currency: 'BRL' });
   });
 
   it('refunds a processed BET once, credits the same amount, and replays idempotently', async () => {

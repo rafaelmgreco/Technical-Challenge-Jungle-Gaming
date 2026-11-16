@@ -23,6 +23,8 @@ export const WagerTransactionEntitySchema = defineEntity({
     failureCode: p.string().fieldName('failure_code').nullable().columnType('text'),
     processedAt: p.datetime().fieldName('processed_at').nullable().columnType('timestamptz'),
     processedBalanceMinorUnits: p.bigint().fieldName('processed_balance_minor_units').nullable().columnType('bigint'),
+    referenceAttemptCount: p.integer().fieldName('reference_attempt_count').columnType('integer'),
+    referenceNextAttemptAt: p.datetime().fieldName('reference_next_attempt_at').nullable().columnType('timestamptz'),
   },
 });
 

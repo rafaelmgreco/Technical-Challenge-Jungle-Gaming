@@ -18,5 +18,6 @@ export interface WagerTransactionRepository {
     referenceTransactionId: string,
     kind: WagerTransactionKind,
   ): Promise<WagerTransaction | null>;
+  findDuePendingReferences(at: Date, limit: number): Promise<WagerTransaction[]>;
   save(transaction: WagerTransaction): Promise<void>;
 }
