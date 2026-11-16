@@ -36,6 +36,8 @@ Authentication is not implemented in this local challenge prototype. Before exte
 
 `GET /health/live` reports that the process can serve requests. `GET /health/ready` checks PostgreSQL with `SELECT 1` and verifies the configured SQS queue with `GetQueueAttributes`; it returns `503` with per-dependency status if either check fails. Both health endpoints are public.
 
+Application processing logs are single-line JSON with an event name, timestamp, level, and allowlisted operational identifiers (`correlationId`, `messageId`, `transactionId`, `walletId`, `providerId`, and related event IDs). Error messages and money values are excluded to avoid copying payload or financial data into logs.
+
 ## Ledger
 
 Each `WalletLedgerEntry` is immutable and records the wallet, transaction, direction, amount, previous balance, resulting balance, and creation time. The `create` factory requires matching currencies, a positive amount, non-negative balances, and validates that `previous balance ± amount = resulting balance`. PostgreSQL enforces one entry per wallet and transaction, validates the balance arithmetic, and ensures the ledger currency matches the wallet.

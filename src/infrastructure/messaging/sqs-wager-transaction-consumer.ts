@@ -5,7 +5,6 @@ import {
 } from '@aws-sdk/client-sqs';
 import {
   Injectable,
-  Logger,
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
@@ -17,6 +16,10 @@ import {
 import { InboxMessageConflictError } from '../../application/ports/inbox-message.repository.js';
 import { SubmitWagerTransactionService } from '../../application/submit-wager-transaction.service.js';
 import { parseWagerTransactionBody } from '../../wagering/parse-wager-transaction-body.js';
+import {
+  StructuredLogger,
+  type StructuredLogContext,
+} from '../logging/structured-logger.js';
 
 const CONSUMER_NAME = 'wager-transaction-requested-v1';
 
@@ -24,7 +27,7 @@ const CONSUMER_NAME = 'wager-transaction-requested-v1';
 export class SqsWagerTransactionConsumer
   implements OnModuleInit, OnModuleDestroy
 {
-  private readonly logger = new Logger(SqsWagerTransactionConsumer.name);
+  private readonly logger = new StructuredLogger();
   private readonly client = new SQSClient({
     region: process.env.AWS_REGION ?? 'us-east-1',
     ...(process.env.SQS_ENDPOINT_URL
@@ -78,6 +81,8 @@ export class SqsWagerTransactionConsumer
     let acknowledged = 0;
     for (const message of response.Messages ?? []) {
       if (!message.Body || !message.ReceiptHandle) continue;
+      let logContext: StructuredLogContext = {};
+      if (message.MessageId) logContext.messageId = message.MessageId;
       try {
         const envelope = JSON.parse(message.Body) as Record<string, unknown>;
         if (envelope.type !== 'WagerTransactionRequested') {
@@ -106,10 +111,17 @@ export class SqsWagerTransactionConsumer
           );
         }
         const input = parseWagerTransactionBody(data);
+        logContext = {
+          messageId: envelope.messageId,
+          correlationId: data.idempotencyKey.trim(),
+          externalTransactionId: input.externalTransactionId,
+          walletId: input.walletId,
+          providerId: input.providerId,
+        };
         const payloadHash = createHash('sha256')
           .update(message.Body)
           .digest('hex');
-        await this.submissions.submit(
+        const result = await this.submissions.submit(
           { ...input, idempotencyKey: data.idempotencyKey.trim() },
           {
             consumerName: CONSUMER_NAME,
@@ -118,6 +130,12 @@ export class SqsWagerTransactionConsumer
             receivedAt: new Date(),
           },
         );
+        this.logger.info('wager_transaction_message_processed', {
+          ...logContext,
+          ...(result.transactionId
+            ? { transactionId: result.transactionId }
+            : {}),
+        });
         await this.client.send(
           new DeleteMessageCommand({
             QueueUrl: queueUrl,
@@ -132,7 +150,9 @@ export class SqsWagerTransactionConsumer
           error instanceof InboxMessageConflictError
         ) {
           this.logger.warn(
-            `Acknowledging terminal wager message ${message.MessageId}: ${error.message}`,
+            'wager_transaction_message_terminal',
+            logContext,
+            error,
           );
           await this.client.send(
             new DeleteMessageCommand({
@@ -143,10 +163,7 @@ export class SqsWagerTransactionConsumer
           acknowledged += 1;
           continue;
         }
-        this.logger.error(
-          'Failed to process SQS wager transaction; message will be retried or sent to the DLQ',
-          error,
-        );
+        this.logger.error('wager_transaction_message_failed', logContext, error);
       }
     }
     return acknowledged;
@@ -157,8 +174,9 @@ export class SqsWagerTransactionConsumer
       try {
         await this.runOnce();
       } catch (error) {
-        if (!this.stopped)
-          this.logger.error('SQS wager transaction polling failed', error);
+        if (!this.stopped) {
+          this.logger.error('sqs_wager_transaction_poll_failed', {}, error);
+        }
       }
     }
   }

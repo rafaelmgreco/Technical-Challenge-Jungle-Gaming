@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InsufficientWalletFundsError } from '../domain/wallet/wallet.js';
 import {
   InvalidWagerTransactionStateError,
@@ -10,13 +10,14 @@ import {
   WagerTransactionPendingReferenceError,
 } from './wallet-movement.service.js';
 import { WALLET_UNIT_OF_WORK, type WalletUnitOfWork } from './ports/wallet-unit-of-work.js';
+import { StructuredLogger } from '../infrastructure/logging/structured-logger.js';
 
 const POLL_INTERVAL_MS = 1_000;
 const PENDING_REFERENCE_BATCH_SIZE = 50;
 
 @Injectable()
 export class PendingReferenceWorker implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(PendingReferenceWorker.name);
+  private readonly logger = new StructuredLogger();
   private interval?: ReturnType<typeof setInterval>;
   private running = false;
 
@@ -55,6 +56,17 @@ export class PendingReferenceWorker implements OnModuleInit, OnModuleDestroy {
         }
         attempted += 1;
       } catch (error) {
+        this.logger.warn(
+          'pending_reference_retry_deferred',
+          {
+            correlationId: transaction.idempotencyKey,
+            transactionId: transaction.id,
+            walletId: transaction.walletId,
+            providerId: transaction.providerId,
+            externalTransactionId: transaction.externalTransactionId,
+          },
+          error,
+        );
         if (
           error instanceof WagerTransactionPendingReferenceError ||
           error instanceof InvalidReferencedTransactionError ||
@@ -79,7 +91,7 @@ export class PendingReferenceWorker implements OnModuleInit, OnModuleDestroy {
     try {
       await this.runOnce();
     } catch (error) {
-      this.logger.error('Failed to process pending wager references', error);
+      this.logger.error('pending_reference_worker_poll_failed', {}, error);
     } finally {
       this.running = false;
     }

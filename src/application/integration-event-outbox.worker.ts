@@ -1,7 +1,6 @@
 import {
   Inject,
   Injectable,
-  Logger,
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
@@ -12,6 +11,7 @@ import {
   INTEGRATION_EVENT_PUBLISHER,
   type IntegrationEventPublisher,
 } from './ports/integration-event-publisher.js';
+import { StructuredLogger } from '../infrastructure/logging/structured-logger.js';
 
 const POLL_INTERVAL_MS = 1_000;
 const BATCH_SIZE = 10;
@@ -22,7 +22,7 @@ const MAX_RETRY_DELAY_MS = 300_000;
 export class IntegrationEventOutboxWorker
   implements OnModuleInit, OnModuleDestroy
 {
-  private readonly logger = new Logger(IntegrationEventOutboxWorker.name);
+  private readonly logger = new StructuredLogger();
   private readonly workerId = crypto.randomUUID();
   private interval?: ReturnType<typeof setInterval>;
   private running = false;
@@ -59,6 +59,17 @@ export class IntegrationEventOutboxWorker
     for (const event of events) {
       try {
         await this.publisher.publish(event);
+        this.logger.info('integration_event_published', {
+          eventId: event.id,
+          transactionId: event.aggregateId,
+          correlationId: event.correlationId,
+          ...(typeof event.data.walletId === 'string'
+            ? { walletId: event.data.walletId }
+            : {}),
+          ...('providerId' in event.data
+            ? { providerId: event.data.providerId }
+            : {}),
+        });
         if (
           await outbox.markPublished({
             eventId: event.id,
@@ -78,7 +89,18 @@ export class IntegrationEventOutboxWorker
           nextAttemptAt: new Date(Date.now() + delay),
         });
         this.logger.error(
-          `Failed to publish integration event ${event.id}`,
+          'integration_event_publish_failed',
+          {
+            eventId: event.id,
+            transactionId: event.aggregateId,
+            correlationId: event.correlationId,
+            ...(typeof event.data.walletId === 'string'
+              ? { walletId: event.data.walletId }
+              : {}),
+            ...('providerId' in event.data
+              ? { providerId: event.data.providerId }
+              : {}),
+          },
           error,
         );
       }
@@ -92,7 +114,7 @@ export class IntegrationEventOutboxWorker
     try {
       await this.runOnce();
     } catch (error) {
-      this.logger.error('Failed to publish integration events', error);
+      this.logger.error('integration_event_outbox_poll_failed', {}, error);
     } finally {
       this.running = false;
     }

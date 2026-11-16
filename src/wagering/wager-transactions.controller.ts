@@ -29,9 +29,12 @@ import {
   WagerTransactionNotFoundError,
 } from '../application/get-wager-transaction.service.js';
 import { toWagerTransactionResponse } from './wager-transaction-response.js';
+import { StructuredLogger } from '../infrastructure/logging/structured-logger.js';
 
 @Controller('wagering/transactions')
 export class WagerTransactionsController {
+  private readonly logger = new StructuredLogger();
+
   constructor(
     private readonly submissions: SubmitWagerTransactionService,
     private readonly getTransactions: GetWagerTransactionService,
@@ -71,9 +74,17 @@ export class WagerTransactionsController {
 
     let result: SubmitWagerTransactionResult;
     try {
+      const input = parseWagerTransactionBody(rawBody);
       result = await this.submissions.submit({
-        ...parseWagerTransactionBody(rawBody),
+        ...input,
         idempotencyKey: idempotencyHeader.trim(),
+      });
+      this.logger.info('wager_transaction_http_submitted', {
+        correlationId: idempotencyHeader.trim(),
+        transactionId: result.transactionId,
+        walletId: input.walletId,
+        providerId: input.providerId,
+        externalTransactionId: input.externalTransactionId,
       });
     } catch (error) {
       if (
