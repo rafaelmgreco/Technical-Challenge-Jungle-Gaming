@@ -18,14 +18,28 @@ describe('wallet database migration', () => {
   let orm: MikroORM;
   const playerId = `migration-test-${crypto.randomUUID()}`;
   const walletId = crypto.randomUUID();
+  const ledgerTestPlayerId = `${playerId}-ledger`;
+  const ledgerTestWalletId = crypto.randomUUID();
+  const ledgerTestTransactionId = crypto.randomUUID();
 
   beforeAll(async () => {
     orm = await MikroORM.init(mikroOrmConfig);
     await orm.migrator.up();
+    await orm.em.getConnection().execute(
+      `insert into "wallets" ("id", "player_id", "currency", "balance_minor_units", "version", "created_at", "updated_at")
+       values (?, ?, ?, ?, ?, now(), now())`,
+      [ledgerTestWalletId, ledgerTestPlayerId, 'BRL', '0', 1],
+    );
+    await orm.em.getConnection().execute(
+      `insert into "wager_transactions" ("id", "provider_id", "external_transaction_id", "idempotency_key", "payload_hash", "wallet_id", "player_id", "round_id", "game_id", "kind", "amount_minor_units", "currency", "created_at", "status")
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now(), ?)`,
+      [ledgerTestTransactionId, 'migration-provider', 'migration-external', 'migration-key', 'migration-hash', ledgerTestWalletId, ledgerTestPlayerId, 'migration-round', 'migration-game', 'BET', '100', 'BRL', 'PENDING'],
+    );
   });
 
   afterAll(async () => {
     if (orm) {
+      await orm.em.getConnection().execute('delete from "wager_transactions" where "player_id" like ?', [`${playerId}%`]);
       await orm.em.getConnection().execute('delete from "wallets" where "player_id" like ?', [`${playerId}%`]);
       await orm.close(true);
     }
@@ -54,7 +68,7 @@ describe('wallet database migration', () => {
       orm.em.getConnection().execute(
         `insert into "wallet_ledger_entries" ("id", "wallet_id", "transaction_id", "direction", "currency", "amount_minor_units", "balance_before_minor_units", "balance_after_minor_units", "created_at")
          values (?, ?, ?, ?, ?, ?, ?, ?, now())`,
-        [crypto.randomUUID(), walletId, crypto.randomUUID(), 'DEBIT', currency, '100', '1000', balanceAfter],
+        [crypto.randomUUID(), ledgerTestWalletId, ledgerTestTransactionId, 'DEBIT', currency, '100', '1000', balanceAfter],
       );
 
     await expectConstraintViolation(insertLedgerEntry('USD', '900'));

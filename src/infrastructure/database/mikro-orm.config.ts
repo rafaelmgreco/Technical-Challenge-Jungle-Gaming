@@ -3,12 +3,13 @@ import { Migrator } from '@mikro-orm/migrations';
 import { defineConfig } from '@mikro-orm/postgresql';
 import { WalletEntity } from './wallet.entity.js';
 import { WalletLedgerEntryEntity } from './wallet-ledger-entry.entity.js';
+import { WagerTransactionEntity } from './wager-transaction.entity.js';
 
 export default defineConfig({
   clientUrl:
     process.env.DATABASE_URL ??
     'postgresql://jungle:jungle_dev_password@localhost:5432/jungle',
-  entities: [WalletEntity, WalletLedgerEntryEntity],
+  entities: [WalletEntity, WalletLedgerEntryEntity, WagerTransactionEntity],
   metadataProvider: ReflectMetadataProvider,
   discovery: {
     warnWhenNoEntities: false,

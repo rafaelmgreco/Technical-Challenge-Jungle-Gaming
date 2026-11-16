@@ -1,7 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { Money } from '../domain/money/money.js';
 import { LedgerDirection, WalletLedgerEntry } from '../domain/ledger/ledger-entry.js';
 import type { WalletBalanceChange } from '../domain/wallet/wallet.js';
+import { InsufficientWalletFundsError } from '../domain/wallet/wallet.js';
+import {
+  InvalidWagerTransactionError,
+  InvalidWagerTransactionStateError,
+  WagerTransactionKind,
+  WagerTransactionStatus,
+} from '../domain/wager-transaction/wager-transaction.js';
 import { WALLET_UNIT_OF_WORK, type WalletUnitOfWork } from './ports/wallet-unit-of-work.js';
 
 export class WalletNotFoundError extends Error {
@@ -11,65 +17,101 @@ export class WalletNotFoundError extends Error {
   }
 }
 
+export class WagerTransactionNotFoundError extends Error {
+  constructor(transactionId: string) {
+    super(`Wager transaction ${transactionId} was not found`);
+    this.name = 'WagerTransactionNotFoundError';
+  }
+}
+
 @Injectable()
 export class WalletMovementService {
   constructor(@Inject(WALLET_UNIT_OF_WORK) private readonly unitOfWork: WalletUnitOfWork) {}
 
-  async debit(
-    walletId: string,
-    transactionId: string,
-    money: Money,
-    occurredAt?: Date,
-  ): Promise<WalletBalanceChange> {
-    return this.unitOfWork.execute(async ({ wallets, ledger }) => {
-      const wallet = await wallets.findByIdForUpdate(walletId);
-      if (!wallet) {
-        throw new WalletNotFoundError(walletId);
-      }
-
-      const change = wallet.debit(money, occurredAt);
-      const entry = WalletLedgerEntry.create({
-        id: crypto.randomUUID(),
-        walletId,
-        transactionId,
-        direction: LedgerDirection.Debit,
-        money: change.money,
-        balanceBefore: change.balanceBefore,
-        balanceAfter: change.balanceAfter,
-        createdAt: change.occurredAt,
-      });
-      await wallets.save(wallet);
-      await ledger.save(entry);
-      return change;
-    });
+  async debit(transactionId: string, processedAt?: Date): Promise<WalletBalanceChange> {
+    return this.applyMovement(transactionId, LedgerDirection.Debit, processedAt);
   }
 
-  async credit(
-    walletId: string,
+  async credit(transactionId: string, processedAt?: Date): Promise<WalletBalanceChange> {
+    return this.applyMovement(transactionId, LedgerDirection.Credit, processedAt);
+  }
+
+  private async applyMovement(
     transactionId: string,
-    money: Money,
-    occurredAt?: Date,
+    expectedDirection: LedgerDirection,
+    processedAt?: Date,
   ): Promise<WalletBalanceChange> {
-    return this.unitOfWork.execute(async ({ wallets, ledger }) => {
-      const wallet = await wallets.findByIdForUpdate(walletId);
-      if (!wallet) {
-        throw new WalletNotFoundError(walletId);
+    const outcome = await this.unitOfWork.execute(async ({ wallets, ledger, transactions }) => {
+      const transaction = await transactions.findByIdForUpdate(transactionId);
+      if (!transaction) {
+        throw new WagerTransactionNotFoundError(transactionId);
+      }
+      if (transaction.status !== WagerTransactionStatus.Pending) {
+        throw new InvalidWagerTransactionStateError(transaction.status);
+      }
+      const expectedKind =
+        expectedDirection === LedgerDirection.Debit
+          ? WagerTransactionKind.Bet
+          : WagerTransactionKind.Win;
+      if (transaction.kind !== expectedKind) {
+        throw new InvalidWagerTransactionError(
+          `This movement handler only processes ${expectedKind} transactions`,
+        );
       }
 
-      const change = wallet.credit(money, occurredAt);
+      const direction = transaction.ledgerDirectionFor();
+      if (direction !== expectedDirection) {
+        throw new InvalidWagerTransactionError(
+          `Transaction kind ${transaction.kind} cannot be processed as ${expectedDirection}`,
+        );
+      }
+
+      const wallet = await wallets.findByIdForUpdate(transaction.walletId);
+      if (!wallet) {
+        throw new WalletNotFoundError(transaction.walletId);
+      }
+      if (wallet.playerId !== transaction.playerId) {
+        throw new InvalidWagerTransactionError('Transaction player does not match the wallet owner');
+      }
+
+      const at = processedAt ?? new Date();
+      let change: WalletBalanceChange;
+      try {
+        change =
+          direction === LedgerDirection.Debit
+            ? wallet.debit(transaction.money, at)
+            : wallet.credit(transaction.money, at);
+      } catch (error) {
+        if (!(error instanceof InsufficientWalletFundsError)) {
+          throw error;
+        }
+
+        transaction.reject('INSUFFICIENT_FUNDS');
+        await transactions.save(transaction);
+        return { failure: error } as const;
+      }
+
+      transaction.markProcessed(undefined, at);
       const entry = WalletLedgerEntry.create({
         id: crypto.randomUUID(),
-        walletId,
-        transactionId,
-        direction: LedgerDirection.Credit,
+        walletId: wallet.id,
+        transactionId: transaction.id,
+        direction,
         money: change.money,
         balanceBefore: change.balanceBefore,
         balanceAfter: change.balanceAfter,
         createdAt: change.occurredAt,
       });
+
       await wallets.save(wallet);
       await ledger.save(entry);
-      return change;
+      await transactions.save(transaction);
+      return { change } as const;
     });
+
+    if ('failure' in outcome) {
+      throw outcome.failure;
+    }
+    return outcome.change;
   }
 }

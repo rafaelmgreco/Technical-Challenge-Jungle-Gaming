@@ -22,6 +22,8 @@ A transaction starts in `PENDING`.
 
 Failure codes are stable, uppercase, machine-readable strings, for example `INSUFFICIENT_FUNDS`. The financial processing use cases will define the specific failure codes.
 
+Wager transactions are persisted with their provider identity, idempotency key, payload hash, wallet, amount, status, and processing result. PostgreSQL enforces unique idempotency keys and external transaction IDs per provider. The current movement service processes unreferenced `BET` debits and `WIN` credits; reference-based operations are still pending.
+
 ## Ledger
 
 Each `WalletLedgerEntry` is immutable and records the wallet, transaction, direction, amount, previous balance, resulting balance, and creation time. The `create` factory requires matching currencies, a positive amount, non-negative balances, and validates that `previous balance ± amount = resulting balance`. PostgreSQL enforces one entry per wallet and transaction, validates the balance arithmetic, and ensures the ledger currency matches the wallet.
@@ -39,7 +41,7 @@ Financial references must be processed and match the same provider, player, wall
 
 ## Wallet movement concurrency
 
-Wallet debits and credits run through a unit of work backed by a PostgreSQL transaction. The repository loads the wallet with `PESSIMISTIC_WRITE`, so concurrent movements for the same wallet are serialized before the domain balance is changed. The wallet update and immutable ledger entry are saved in the same transaction. A failed movement or ledger insert aborts the transaction without saving a partial update.
+Wallet debits and credits run through a unit of work backed by a PostgreSQL transaction. The unit of work locks the wager transaction and wallet, then persists their updated state and the immutable ledger entry atomically. Concurrent movements for the same wallet are serialized with `PESSIMISTIC_WRITE`. An insufficient-funds debit is recorded as `REJECTED` with `INSUFFICIENT_FUNDS`; it does not change the balance or create a ledger entry. Any persistence failure rolls back the entire operation.
 
 ## Pending decisions
 
@@ -47,4 +49,4 @@ Wallet debits and credits run through a unit of work backed by a PostgreSQL tran
 
 ## Local persistence
 
-PostgreSQL runs through Docker Compose, with its port bound to `127.0.0.1`. NestJS uses MikroORM 7 with the PostgreSQL driver. Reversible migrations create `wallets` and `wallet_ledger_entries`. Wallet balances, ledger amounts, and balance snapshots use minor units as `BIGINT`; constraints protect wallet uniqueness, ledger uniqueness, matching currencies, and balanced entries. Integration tests validate the schema, repository round-trips, transaction rollback, and concurrent wallet movements against PostgreSQL.
+PostgreSQL runs through Docker Compose, with its port bound to `127.0.0.1`. NestJS uses MikroORM 7 with the PostgreSQL driver. Reversible migrations create `wallets`, `wallet_ledger_entries`, and `wager_transactions`. Wallet balances, transaction amounts, ledger amounts, and balance snapshots use minor units as `BIGINT`; constraints protect wallet and transaction currencies, provider idempotency, transaction identity, ledger uniqueness, and balanced entries. Integration tests validate the schema, repository round-trips, transaction rollback, and concurrent wallet movements against PostgreSQL.
