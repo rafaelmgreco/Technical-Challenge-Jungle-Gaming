@@ -32,6 +32,8 @@ Registration treats a retry with the same provider, idempotency key, and payload
 
 Authentication is not implemented in this local challenge prototype. Before external exposure, the controller should use a `ProviderIdentityPort` backed by an external OIDC identity provider; health endpoints can remain public.
 
+`POST /wallets` accepts `playerId` and an `initialBalance` decimal string with an ISO-4217 currency. A second wallet for the same player and currency returns a conflict; the same player can have wallets in different currencies.
+
 ## Ledger
 
 Each `WalletLedgerEntry` is immutable and records the wallet, transaction, direction, amount, previous balance, resulting balance, and creation time. The `create` factory requires matching currencies, a positive amount, non-negative balances, and validates that `previous balance ± amount = resulting balance`. PostgreSQL enforces one entry per wallet and transaction, validates the balance arithmetic, and ensures the ledger currency matches the wallet.
@@ -50,6 +52,8 @@ Financial references must be processed and match the same provider, player, wall
 ## Wallet movement concurrency
 
 Wallet debits and credits run through a unit of work backed by a PostgreSQL transaction. The unit of work locks the wager transaction and wallet, then persists their updated state and the immutable ledger entry atomically. Concurrent movements for the same wallet are serialized with `PESSIMISTIC_WRITE`. An insufficient-funds debit is recorded as `REJECTED` with `INSUFFICIENT_FUNDS`; it does not change the balance or create a ledger entry. Any persistence failure rolls back the entire operation.
+
+Wallet creation also runs in one PostgreSQL transaction. A positive initial balance creates an internal `OPENING` transaction and its matching `CREDIT` ledger entry; a zero balance creates neither. `OPENING` is not accepted by the provider transaction endpoint.
 
 ## Pending decisions
 
