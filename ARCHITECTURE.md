@@ -39,10 +39,9 @@ Referências financeiras precisam estar processadas e corresponder ao mesmo prov
 
 ## Próximas decisões
 
-- Mapear as entidades e criar migrations reversíveis do PostgreSQL com valores monetários em centavos `BIGINT`.
 - Aplicar bloqueio pessimista por carteira dentro da transação SQL.
 - Definir o emulador de SQS local e as políticas de retry e DLQ.
 
 ## Persistência local
 
-O PostgreSQL roda em Docker Compose, com a porta local limitada a `127.0.0.1`. O NestJS usa MikroORM 7 com o driver PostgreSQL; migrations estão registradas, mas ainda não há tabelas de domínio. A tabela inicial e suas constraints serão adicionadas no próximo passo.
+O PostgreSQL roda em Docker Compose, com a porta local limitada a `127.0.0.1`. O NestJS usa MikroORM 7 com o driver PostgreSQL. A migration inicial cria `wallets` com saldo em centavos `BIGINT`, unicidade por jogador e moeda, formato de moeda de três letras maiúsculas, saldo não negativo e versão positiva. A migration pode ser revertida e o teste de integração valida essas constraints no PostgreSQL.

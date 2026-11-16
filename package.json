@@ -21,7 +21,8 @@
     "test:e2e": "bun test ./test",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
-    "db:logs": "docker compose logs -f postgres"
+    "db:logs": "docker compose logs -f postgres",
+    "db:migrate": "bun src/infrastructure/database/migrate.ts"
   },
   "dependencies": {
     "@mikro-orm/core": "^7.2.9",

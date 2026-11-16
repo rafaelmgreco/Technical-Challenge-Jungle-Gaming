@@ -22,6 +22,7 @@ Este repositório está no início: contém a aplicação NestJS mínima, o obje
 bun install
 Copy-Item .env.example .env
 bun run db:up
+bun run db:migrate
 bun run start:dev
 ```
 
@@ -36,6 +37,6 @@ bun test
 bun run test:e2e
 ```
 
-Os testes atuais cobrem o esqueleto, as regras de `Money`, `Wallet`, `WagerTransaction` e ledger, e o endpoint inicial. Como o módulo Nest abre a conexão com o PostgreSQL, inicie o banco com `bun run db:up` antes de rodar os testes.
+Os testes atuais cobrem o esqueleto, as regras de `Money`, `Wallet`, `WagerTransaction` e ledger, o endpoint inicial e as constraints da migration da carteira no PostgreSQL. Inicie o banco com `bun run db:up` antes de rodar os testes.
 
 As transições de estado escolhidas para `WagerTransaction` estão em [ARCHITECTURE.md](./ARCHITECTURE.md).
