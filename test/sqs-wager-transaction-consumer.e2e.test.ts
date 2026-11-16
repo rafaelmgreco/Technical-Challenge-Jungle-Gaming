@@ -18,6 +18,7 @@ import mikroOrmConfig from '../src/infrastructure/database/mikro-orm.config.js';
 import { MikroOrmWalletUnitOfWork } from '../src/infrastructure/persistence/mikro-orm-wallet-unit-of-work.js';
 import { MikroOrmWalletRepository } from '../src/infrastructure/persistence/mikro-orm-wallet.repository.js';
 import { SqsWagerTransactionConsumer } from '../src/infrastructure/messaging/sqs-wager-transaction-consumer.js';
+import { MetricsRegistry } from '../src/infrastructure/metrics/metrics.registry.js';
 
 const endpoint = process.env.SQS_ENDPOINT_URL;
 
@@ -25,6 +26,7 @@ describe.skipIf(!endpoint)('SQS wager transaction consumer', () => {
   let orm: MikroORM;
   let sqs: SQSClient;
   let consumer: SqsWagerTransactionConsumer;
+  let metrics: MetricsRegistry;
   let queueUrl: string;
   let deadLetterQueueUrl: string;
   const playerId = `sqs-consumer-test-${crypto.randomUUID()}`;
@@ -84,7 +86,8 @@ describe.skipIf(!endpoint)('SQS wager transaction consumer', () => {
       new WalletMovementService(unitOfWork),
       unitOfWork,
     );
-    consumer = new SqsWagerTransactionConsumer(submissions);
+    metrics = new MetricsRegistry();
+    consumer = new SqsWagerTransactionConsumer(submissions, metrics);
 
     const wallet = Wallet.open({
       id: crypto.randomUUID(),
@@ -190,6 +193,12 @@ describe.skipIf(!endpoint)('SQS wager transaction consumer', () => {
     });
     expect(ledgerRows).toHaveLength(1);
     expect(inboxRows).toHaveLength(1);
+    const metricsText = metrics.renderPrometheus();
+    expect(metricsText).toContain(
+      'wager_transaction_submissions_total{source="sqs",status="PROCESSED"} 2',
+    );
+    expect(metricsText).toContain('wager_duplicates_total 1');
+    expect(metricsText).toContain('wager_processing_duration_seconds_count 2');
   });
 
   it('sends a poison message to the configured DLQ after five unsuccessful receives', async () => {
@@ -220,5 +229,8 @@ describe.skipIf(!endpoint)('SQS wager transaction consumer', () => {
     }
 
     expect(deadLettered).toBe(true);
+    expect(metrics.renderPrometheus()).toContain(
+      'wager_sqs_dlq_redrives_total 1',
+    );
   });
 });

@@ -4,6 +4,7 @@ import {
   SQSClient,
 } from '@aws-sdk/client-sqs';
 import {
+  Inject,
   Injectable,
   OnModuleDestroy,
   OnModuleInit,
@@ -20,6 +21,9 @@ import {
   StructuredLogger,
   type StructuredLogContext,
 } from '../logging/structured-logger.js';
+import { MetricsRegistry } from '../metrics/metrics.registry.js';
+
+const MAX_RECEIVE_COUNT_BEFORE_DLQ = 5;
 
 const CONSUMER_NAME = 'wager-transaction-requested-v1';
 
@@ -45,7 +49,11 @@ export class SqsWagerTransactionConsumer
   private stopped = true;
   private loop?: Promise<void>;
 
-  constructor(private readonly submissions: SubmitWagerTransactionService) {}
+  constructor(
+    private readonly submissions: SubmitWagerTransactionService,
+    @Inject(MetricsRegistry)
+    private readonly metrics: MetricsRegistry = new MetricsRegistry(),
+  ) {}
 
   onModuleInit(): void {
     if (
@@ -75,12 +83,14 @@ export class SqsWagerTransactionConsumer
         QueueUrl: queueUrl,
         MaxNumberOfMessages: 10,
         WaitTimeSeconds: waitTimeSeconds,
-      VisibilityTimeout: visibilityTimeoutSeconds,
+        VisibilityTimeout: visibilityTimeoutSeconds,
+        MessageSystemAttributeNames: ['ApproximateReceiveCount'],
       }),
     );
     let acknowledged = 0;
     for (const message of response.Messages ?? []) {
       if (!message.Body || !message.ReceiptHandle) continue;
+      const processingStartedAt = performance.now();
       let logContext: StructuredLogContext = {};
       if (message.MessageId) logContext.messageId = message.MessageId;
       try {
@@ -130,6 +140,10 @@ export class SqsWagerTransactionConsumer
             receivedAt: new Date(),
           },
         );
+        this.metrics.recordTransaction(result.status, 'sqs');
+        if (result.duplicateMessage || result.idempotentReplay) {
+          this.metrics.recordDuplicate();
+        }
         this.logger.info('wager_transaction_message_processed', {
           ...logContext,
           ...(result.transactionId
@@ -163,7 +177,18 @@ export class SqsWagerTransactionConsumer
           acknowledged += 1;
           continue;
         }
+        this.metrics.recordRetry('sqs');
+        const receiveCount = Number(
+          message.Attributes?.ApproximateReceiveCount ?? '0',
+        );
+        if (receiveCount >= MAX_RECEIVE_COUNT_BEFORE_DLQ) {
+          this.metrics.recordDlqRedrive();
+        }
         this.logger.error('wager_transaction_message_failed', logContext, error);
+      } finally {
+        this.metrics.observeProcessingDurationSeconds(
+          (performance.now() - processingStartedAt) / 1_000,
+        );
       }
     }
     return acknowledged;

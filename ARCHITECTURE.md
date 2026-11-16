@@ -38,6 +38,8 @@ Authentication is not implemented in this local challenge prototype. Before exte
 
 Application processing logs are single-line JSON with an event name, timestamp, level, and allowlisted operational identifiers (`correlationId`, `messageId`, `transactionId`, `walletId`, `providerId`, and related event IDs). Error messages and money values are excluded to avoid copying payload or financial data into logs.
 
+`GET /metrics` exposes Prometheus text format counters for transaction submission outcomes, persistent duplicates, retries, SQS DLQ redrive thresholds, PostgreSQL lock conflicts, an outbox lag gauge, and a processing duration histogram. Metrics are process-local and reset on restart; they are operational telemetry only and never participate in financial or idempotency decisions. The outbox lag gauge measures the age of the oldest event in the latest claimed batch, or zero when no due events were claimed.
+
 ## Ledger
 
 Each `WalletLedgerEntry` is immutable and records the wallet, transaction, direction, amount, previous balance, resulting balance, and creation time. The `create` factory requires matching currencies, a positive amount, non-negative balances, and validates that `previous balance ± amount = resulting balance`. PostgreSQL enforces one entry per wallet and transaction, validates the balance arithmetic, and ensures the ledger currency matches the wallet.

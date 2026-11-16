@@ -23,6 +23,8 @@ import { GetWagerTransactionService } from './application/get-wager-transaction.
 import { ProviderWagerTransactionsController } from './wagering/provider-wager-transactions.controller.js';
 import { HealthController } from './health/health.controller.js';
 import { HealthCheckService } from './infrastructure/health/health-check.service.js';
+import { MetricsController } from './metrics/metrics.controller.js';
+import { MetricsRegistry } from './infrastructure/metrics/metrics.registry.js';
 
 @Module({
   imports: [
@@ -31,7 +33,7 @@ import { HealthCheckService } from './infrastructure/health/health-check.service
       autoLoadEntities: true,
     }),
   ],
-  controllers: [AppController, HealthController, WagerTransactionsController, ProviderWagerTransactionsController, WalletsController],
+  controllers: [AppController, HealthController, MetricsController, WagerTransactionsController, ProviderWagerTransactionsController, WalletsController],
   providers: [
     AppService,
     WalletMovementService,
@@ -51,6 +53,7 @@ import { HealthCheckService } from './infrastructure/health/health-check.service
     GetWalletLedgerPageService,
     GetWagerTransactionService,
     HealthCheckService,
+    MetricsRegistry,
     MikroOrmWalletUnitOfWork,
     { provide: WALLET_UNIT_OF_WORK, useExisting: MikroOrmWalletUnitOfWork },
   ],

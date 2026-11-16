@@ -817,4 +817,29 @@ describe('WagerTransactionsController (e2e)', () => {
     const persisted = await new MikroOrmWalletRepository(orm.em.fork()).findById(wallet.id);
     expect(persisted?.balance.toJSON()).toEqual({ amount: '100.00', currency: 'BRL' });
   });
+
+  it('records HTTP transaction outcomes and processing duration in Prometheus metrics', async () => {
+    await request(app.getHttpServer())
+      .post('/wagering/transactions')
+      .set('Idempotency-Key', 'http-provider:metrics-bet')
+      .send({
+        providerId: 'http-provider',
+        externalTransactionId: 'metrics-bet',
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        roundId: 'metrics-round',
+        gameId: 'metrics-game',
+        kind: 'BET',
+        money: { amount: '1.00', currency: 'BRL' },
+      })
+      .expect(201);
+
+    const response = await request(app.getHttpServer())
+      .get('/metrics')
+      .expect(200);
+    expect(response.text).toContain(
+      'wager_transaction_submissions_total{source="http",status="PROCESSED"} 1',
+    );
+    expect(response.text).toContain('wager_processing_duration_seconds_count 1');
+  });
 });

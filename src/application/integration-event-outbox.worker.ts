@@ -12,6 +12,7 @@ import {
   type IntegrationEventPublisher,
 } from './ports/integration-event-publisher.js';
 import { StructuredLogger } from '../infrastructure/logging/structured-logger.js';
+import { MetricsRegistry } from '../infrastructure/metrics/metrics.registry.js';
 
 const POLL_INTERVAL_MS = 1_000;
 const BATCH_SIZE = 10;
@@ -31,6 +32,8 @@ export class IntegrationEventOutboxWorker
     @Inject(EntityManager) private readonly em: EntityManager,
     @Inject(INTEGRATION_EVENT_PUBLISHER)
     private readonly publisher: IntegrationEventPublisher,
+    @Inject(MetricsRegistry)
+    private readonly metrics: MetricsRegistry = new MetricsRegistry(),
   ) {}
 
   onModuleInit(): void {
@@ -54,6 +57,11 @@ export class IntegrationEventOutboxWorker
       leaseUntil: new Date(at.getTime() + LEASE_DURATION_MS),
       limit: BATCH_SIZE,
     });
+    this.metrics.setOutboxLagSeconds(
+      events.length === 0
+        ? 0
+        : Math.max(0, (at.getTime() - events[0]!.occurredAt.getTime()) / 1_000),
+    );
     let published = 0;
 
     for (const event of events) {
@@ -79,6 +87,7 @@ export class IntegrationEventOutboxWorker
         )
           published += 1;
       } catch (error) {
+        this.metrics.recordRetry('outbox');
         const attempts = Number(
           (event as typeof event & { attempts?: number }).attempts ?? 0,
         );

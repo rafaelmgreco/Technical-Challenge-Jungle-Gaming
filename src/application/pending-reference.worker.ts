@@ -11,6 +11,7 @@ import {
 } from './wallet-movement.service.js';
 import { WALLET_UNIT_OF_WORK, type WalletUnitOfWork } from './ports/wallet-unit-of-work.js';
 import { StructuredLogger } from '../infrastructure/logging/structured-logger.js';
+import { MetricsRegistry } from '../infrastructure/metrics/metrics.registry.js';
 
 const POLL_INTERVAL_MS = 1_000;
 const PENDING_REFERENCE_BATCH_SIZE = 50;
@@ -24,6 +25,8 @@ export class PendingReferenceWorker implements OnModuleInit, OnModuleDestroy {
   constructor(
     @Inject(WALLET_UNIT_OF_WORK) private readonly unitOfWork: WalletUnitOfWork,
     private readonly movements: WalletMovementService,
+    @Inject(MetricsRegistry)
+    private readonly metrics: MetricsRegistry = new MetricsRegistry(),
   ) {}
 
   onModuleInit(): void {
@@ -56,6 +59,9 @@ export class PendingReferenceWorker implements OnModuleInit, OnModuleDestroy {
         }
         attempted += 1;
       } catch (error) {
+        if (error instanceof WagerTransactionPendingReferenceError) {
+          this.metrics.recordRetry('pending_reference');
+        }
         this.logger.warn(
           'pending_reference_retry_deferred',
           {

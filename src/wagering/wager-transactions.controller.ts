@@ -3,6 +3,7 @@ import {
   ConflictException,
   Controller,
   Headers,
+  Inject,
   HttpStatus,
   InternalServerErrorException,
   NotFoundException,
@@ -30,6 +31,7 @@ import {
 } from '../application/get-wager-transaction.service.js';
 import { toWagerTransactionResponse } from './wager-transaction-response.js';
 import { StructuredLogger } from '../infrastructure/logging/structured-logger.js';
+import { MetricsRegistry } from '../infrastructure/metrics/metrics.registry.js';
 
 @Controller('wagering/transactions')
 export class WagerTransactionsController {
@@ -38,6 +40,8 @@ export class WagerTransactionsController {
   constructor(
     private readonly submissions: SubmitWagerTransactionService,
     private readonly getTransactions: GetWagerTransactionService,
+    @Inject(MetricsRegistry)
+    private readonly metrics: MetricsRegistry = new MetricsRegistry(),
   ) {}
 
   @Get(':transactionId')
@@ -65,6 +69,7 @@ export class WagerTransactionsController {
     @Body() rawBody: unknown,
     @Res({ passthrough: true }) response: Response,
   ): Promise<Record<string, unknown>> {
+    const startedAt = performance.now();
     if (!idempotencyHeader || idempotencyHeader.trim().length === 0) {
       throw new BadRequestException({
         code: 'INVALID_REQUEST',
@@ -86,6 +91,11 @@ export class WagerTransactionsController {
         providerId: input.providerId,
         externalTransactionId: input.externalTransactionId,
       });
+      this.metrics.recordTransaction(result.status, 'http');
+      if (result.idempotentReplay) this.metrics.recordDuplicate();
+      this.metrics.observeProcessingDurationSeconds(
+        (performance.now() - startedAt) / 1_000,
+      );
     } catch (error) {
       if (
         error instanceof IdempotencyConflictError ||
