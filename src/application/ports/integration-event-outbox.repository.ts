@@ -1,18 +1,63 @@
-export interface IntegrationEventRecord {
+export interface IntegrationEventMoney {
+  amount: string;
+  currency: string;
+}
+
+export interface IntegrationEventDataByType {
+  WagerTransactionPendingReference: {
+    transactionId: string;
+    providerId: string;
+    externalTransactionId: string;
+    referenceExternalTransactionId: string;
+    walletId: string;
+    kind: string;
+  };
+  WagerTransactionRejected: {
+    transactionId: string;
+    providerId: string;
+    externalTransactionId: string;
+    walletId: string;
+    kind: string;
+    failureCode: string;
+  };
+  WagerTransactionProcessed: {
+    transactionId: string;
+    providerId: string;
+    externalTransactionId: string;
+    walletId: string;
+    kind: string;
+    money: IntegrationEventMoney;
+    referenceTransactionId?: string;
+    balance: IntegrationEventMoney;
+  };
+  WalletBalanceChanged: {
+    walletId: string;
+    transactionId: string;
+    direction: 'DEBIT' | 'CREDIT';
+    money: IntegrationEventMoney;
+    balanceBefore: IntegrationEventMoney;
+    balanceAfter: IntegrationEventMoney;
+    walletVersion: number;
+  };
+}
+
+export type IntegrationEventType = keyof IntegrationEventDataByType;
+
+interface IntegrationEventRecordBase<T extends IntegrationEventType> {
   id: string;
   aggregateId: string;
-  eventType:
-    | 'WagerTransactionPendingReference'
-    | 'WagerTransactionRejected'
-    | 'WagerTransactionProcessed'
-    | 'WalletBalanceChanged';
+  eventType: T;
   version: 1;
   correlationId: string;
   causationId?: string;
   occurredAt: Date;
-  data: Readonly<Record<string, unknown>>;
+  data: Readonly<IntegrationEventDataByType[T]>;
   attempts?: number;
 }
+
+export type IntegrationEventRecord = {
+  [T in IntegrationEventType]: IntegrationEventRecordBase<T>;
+}[IntegrationEventType];
 
 export interface IntegrationEventOutboxRepository {
   save(event: IntegrationEventRecord): Promise<void>;

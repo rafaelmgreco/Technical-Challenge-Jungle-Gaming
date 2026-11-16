@@ -30,7 +30,14 @@ describe.skipIf(!enabled)('SQS integration event publisher', () => {
       version: 1 as const,
       correlationId: crypto.randomUUID(),
       occurredAt: new Date(),
-      data: { walletId: crypto.randomUUID(), failureCode: 'INVALID_REFERENCE' },
+      data: {
+        transactionId: crypto.randomUUID(),
+        providerId: 'test-provider',
+        externalTransactionId: crypto.randomUUID(),
+        walletId: crypto.randomUUID(),
+        kind: 'BET',
+        failureCode: 'INVALID_REFERENCE',
+      },
       attempts: 3,
     };
 

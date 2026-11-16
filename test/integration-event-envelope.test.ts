@@ -50,7 +50,15 @@ describe('integration event envelope', () => {
       version: 1,
       correlationId: 'provider:external-2',
       occurredAt: new Date('2026-11-16T12:00:00.000Z'),
-      data: {},
+      data: {
+        transactionId: 'transaction-2',
+        providerId: 'test-provider',
+        externalTransactionId: 'external-2',
+        walletId: 'wallet-2',
+        kind: 'BET',
+        money: { amount: '1.00', currency: 'BRL' },
+        balance: { amount: '10.00', currency: 'BRL' },
+      },
     });
 
     expect(envelope).not.toHaveProperty('causationId');

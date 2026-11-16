@@ -78,7 +78,14 @@ describe('integration event outbox claims', () => {
         version: 1,
         correlationId: crypto.randomUUID(),
         occurredAt: new Date('2026-11-16T12:00:00.000Z'),
-        data: { walletId: wallet.id },
+        data: {
+          transactionId: transaction.id,
+          providerId: transaction.providerId,
+          externalTransactionId: transaction.externalTransactionId,
+          walletId: wallet.id,
+          kind: transaction.kind,
+          failureCode: 'TEST_REJECTION',
+        },
       });
     }
 

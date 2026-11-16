@@ -133,6 +133,14 @@ async function enqueuePendingReferenceEvent(
   transaction: WagerTransaction,
   occurredAt: Date,
 ): Promise<void> {
+  const referenceExternalTransactionId =
+    transaction.referenceExternalTransactionId;
+  if (!referenceExternalTransactionId) {
+    throw new Error(
+      'A pending-reference event requires a reference transaction ID',
+    );
+  }
+
   await outbox.save({
     id: crypto.randomUUID(),
     aggregateId: transaction.id,
@@ -145,8 +153,7 @@ async function enqueuePendingReferenceEvent(
       transactionId: transaction.id,
       providerId: transaction.providerId,
       externalTransactionId: transaction.externalTransactionId,
-      referenceExternalTransactionId:
-        transaction.referenceExternalTransactionId,
+      referenceExternalTransactionId,
       walletId: transaction.walletId,
       kind: transaction.kind,
     },
