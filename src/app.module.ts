@@ -21,6 +21,8 @@ import { GetWalletService } from './application/get-wallet.service.js';
 import { GetWalletLedgerPageService } from './application/get-wallet-ledger-page.service.js';
 import { GetWagerTransactionService } from './application/get-wager-transaction.service.js';
 import { ProviderWagerTransactionsController } from './wagering/provider-wager-transactions.controller.js';
+import { HealthController } from './health/health.controller.js';
+import { HealthCheckService } from './infrastructure/health/health-check.service.js';
 
 @Module({
   imports: [
@@ -29,7 +31,7 @@ import { ProviderWagerTransactionsController } from './wagering/provider-wager-t
       autoLoadEntities: true,
     }),
   ],
-  controllers: [AppController, WagerTransactionsController, ProviderWagerTransactionsController, WalletsController],
+  controllers: [AppController, HealthController, WagerTransactionsController, ProviderWagerTransactionsController, WalletsController],
   providers: [
     AppService,
     WalletMovementService,
@@ -48,6 +50,7 @@ import { ProviderWagerTransactionsController } from './wagering/provider-wager-t
     GetWalletService,
     GetWalletLedgerPageService,
     GetWagerTransactionService,
+    HealthCheckService,
     MikroOrmWalletUnitOfWork,
     { provide: WALLET_UNIT_OF_WORK, useExisting: MikroOrmWalletUnitOfWork },
   ],

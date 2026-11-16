@@ -34,6 +34,8 @@ Authentication is not implemented in this local challenge prototype. Before exte
 
 `POST /wallets` accepts `playerId` and an `initialBalance` decimal string with an ISO-4217 currency. A second wallet for the same player and currency returns a conflict; the same player can have wallets in different currencies. `GET /wallets/:walletId` returns the stored wallet state or `404`. `GET /wallets/:walletId/ledger` uses keyset pagination ordered by `(createdAt, id)` with a base64url cursor; page size defaults to 50 and is limited to 100. `POST /wallets/:walletId/reconciliation` sums immutable ledger movements, checks their arithmetic and currency, and compares the result with the stored balance. It reports discrepancies without changing financial data.
 
+`GET /health/live` reports that the process can serve requests. `GET /health/ready` checks PostgreSQL with `SELECT 1` and verifies the configured SQS queue with `GetQueueAttributes`; it returns `503` with per-dependency status if either check fails. Both health endpoints are public.
+
 ## Ledger
 
 Each `WalletLedgerEntry` is immutable and records the wallet, transaction, direction, amount, previous balance, resulting balance, and creation time. The `create` factory requires matching currencies, a positive amount, non-negative balances, and validates that `previous balance ± amount = resulting balance`. PostgreSQL enforces one entry per wallet and transaction, validates the balance arithmetic, and ensures the ledger currency matches the wallet.
